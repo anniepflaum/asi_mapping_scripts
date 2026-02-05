@@ -31,6 +31,8 @@ import magcoordmap as mcm  # Leslie Lamarche's custom module for magnetic grid l
 from PIL import Image
 from io import BytesIO
 
+import check_intersect as ci
+
 
 # Create a circular mask for the ASI field of view (optionally with a margin)
 def circle_mask(h, w, margin_px=0):
@@ -120,16 +122,29 @@ def main():
 #    lat, lon = load_skymap_latlon(args.skymap, args.alt_km)
 #    lon = normalize_lon(lon, args.lon_convention)
     filename = '/Users/e30737/Desktop/Research/SoP_DI/ASIspecinvert_test/starcal/PKR_pixel_coords.h5'
+    site_lon = -147.43
+    site_lat = 65.1192
     with h5py.File(filename, 'r') as h5:
         lat = h5['Latitude'][:]
         lon = h5['Longitude'][:]
+        azmt = h5['Azimuth'][:]
+        elev = h5['Elevation'][:]
         mask = h5['Mask'][:]
 
     filename = '/Users/e30737/Desktop/Research/SoP_DI/ASIspecinvert_test/starcal/VEE_pixel_coords.h5'
+    site_lonv = -146.407
+    site_latv = 67.013
     with h5py.File(filename, 'r') as h5:
         latv = h5['Latitude'][:]
         lonv = h5['Longitude'][:]
+        azmtv = h5['Azimuth'][:]
+        elevv = h5['Elevation'][:]
         maskv = h5['Mask'][:]
+
+    m, mv = ci.calculate_masks(site_lat, site_lon, np.rad2deg(azmt), np.rad2deg(elev), site_latv, site_lonv, np.rad2deg(azmtv), np.rad2deg(elevv))
+
+    mask = np.logical_or(mask, m)
+    maskv = np.logical_or(maskv, mv)
 
     # --- Download the latest PKR green channel image (already single-channel) ---
     url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
@@ -145,8 +160,8 @@ def main():
     H, W = img.shape
 
     # --- Download the latest VEE green channel image (already single-channel) ---
-    #url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
     url = "https://optics.gi.alaska.edu/amisr_archive/VEE/GASI_5577/png/20260203/VEE_558_20260203_092814.png"
+    #url = 'https://optics.gi.alaska.edu/realtime/latest/vee_latest.jpg'
     print(f"Downloading {url} ...")
     resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
     resp.raise_for_status()
@@ -197,8 +212,10 @@ def main():
         return lats, lons
 
     try:
-        lat1, lon1 = load_traj('/Users/anniepflaum/ASI_mapping/Traj_LeftGneissDec25.txt')
-        lat2, lon2 = load_traj('/Users/anniepflaum/ASI_mapping/Traj_RightGneissDec25.txt')
+        #lat1, lon1 = load_traj('/Users/anniepflaum/ASI_mapping/Traj_LeftGneissDec25.txt')
+        #lat2, lon2 = load_traj('/Users/anniepflaum/ASI_mapping/Traj_RightGneissDec25.txt')
+        lat1, lon1 = load_traj('../Traj_Left.txt')
+        lat2, lon2 = load_traj('../Traj_Right.txt')
         ax.scatter(lon1, lat1, s=0.5, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=3)
         ax.scatter(lon2, lat2, s=0.5, color='red', transform=ccrs.PlateCarree(), zorder=3)
         ax.legend(loc='upper right')
