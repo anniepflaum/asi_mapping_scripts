@@ -116,9 +116,20 @@ def main():
     args = ap.parse_args()
 
 
-    # --- Load the geographic mapping for the ASI image ---
-    lat, lon = load_skymap_latlon(args.skymap, args.alt_km)
-    lon = normalize_lon(lon, args.lon_convention)
+#    # --- Load the geographic mapping for the ASI image ---
+#    lat, lon = load_skymap_latlon(args.skymap, args.alt_km)
+#    lon = normalize_lon(lon, args.lon_convention)
+    filename = '/Users/e30737/Desktop/Research/SoP_DI/ASIspecinvert_test/starcal/PKR_pixel_coords.h5'
+    with h5py.File(filename, 'r') as h5:
+        lat = h5['Latitude'][:]
+        lon = h5['Longitude'][:]
+        mask = h5['Mask'][:]
+
+    filename = '/Users/e30737/Desktop/Research/SoP_DI/ASIspecinvert_test/starcal/VEE_pixel_coords.h5'
+    with h5py.File(filename, 'r') as h5:
+        latv = h5['Latitude'][:]
+        lonv = h5['Longitude'][:]
+        maskv = h5['Mask'][:]
 
     # --- Download the latest PKR green channel image (already single-channel) ---
     url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
@@ -133,21 +144,35 @@ def main():
     img = img.astype(np.float32)
     H, W = img.shape
 
+    # --- Download the latest VEE green channel image (already single-channel) ---
+    #url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
+    url = "https://optics.gi.alaska.edu/amisr_archive/VEE/GASI_5577/png/20260203/VEE_558_20260203_092814.png"
+    print(f"Downloading {url} ...")
+    resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
+    resp.raise_for_status()
+    imgv = Image.open(BytesIO(resp.content))
+    imgv = np.asarray(imgv)
+    if imgv.ndim == 3:
+        # If image is RGB, take only one channel (shouldn't be needed, but for safety)
+        imgv = imgv[:, :, 0]
+    imgv = imgv.astype(np.float32)
+    Hv, Wv = imgv.shape
 
-    # --- Mask out pixels outside the ASI field of view and invalid mapping points ---
-    fov = circle_mask(H, W, margin_px=50) & np.isfinite(lat) & np.isfinite(lon)
-    lat_use = np.where(fov, lat, np.nan)
-    lon_use = np.where(fov, lon, np.nan)
 
-    # --- Create the output lat/lon grid ---
-    Lon, Lat, lon_vec, lat_vec = make_target_grid(lat_use, lon_use, args.nx, args.ny, args.padding_deg)
-    fill_nearest = False
-
-    # --- Determine which output grid points are inside the valid ASI footprint ---
-    footprint = remap_scattered_to_grid(fov.astype(np.float32), lat_use, lon_use, Lon, Lat, fill_nearest=False)
-    inside = np.isfinite(footprint) & (footprint > 0.5)
-    footprint = inside.astype(np.float32)
-    Lon, Lat = Lon.astype(np.float32), Lat.astype(np.float32)
+#    # --- Mask out pixels outside the ASI field of view and invalid mapping points ---
+#    fov = circle_mask(H, W, margin_px=50) & np.isfinite(lat) & np.isfinite(lon)
+#    lat_use = np.where(fov, lat, np.nan)
+#    lon_use = np.where(fov, lon, np.nan)
+#
+#    # --- Create the output lat/lon grid ---
+#    Lon, Lat, lon_vec, lat_vec = make_target_grid(lat_use, lon_use, args.nx, args.ny, args.padding_deg)
+#    fill_nearest = False
+#
+#    # --- Determine which output grid points are inside the valid ASI footprint ---
+#    footprint = remap_scattered_to_grid(fov.astype(np.float32), lat_use, lon_use, Lon, Lat, fill_nearest=False)
+#    inside = np.isfinite(footprint) & (footprint > 0.5)
+#    footprint = inside.astype(np.float32)
+#    Lon, Lat = Lon.astype(np.float32), Lat.astype(np.float32)
 
 
     # --- Set up the Cartopy map for plotting ---
@@ -159,7 +184,7 @@ def main():
     ax.add_feature(cfeature.OCEAN.with_scale("50m"), zorder=0)
     ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.8, zorder=2)
     ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.5, zorder=2)
-    extent = (float(np.nanmin(Lon)), float(np.nanmax(Lon)), float(np.nanmin(Lat)), float(np.nanmax(Lat)))
+    #extent = (float(np.nanmin(Lon)), float(np.nanmax(Lon)), float(np.nanmin(Lat)), float(np.nanmax(Lat)))
     ax.set_title("PKR ASI latest green channel mapped to geographic lat/lon")
     mgl = mcm.maggridlines(ax)
 
@@ -181,18 +206,23 @@ def main():
         print(f"Could not plot rocket trajectories: {e}")
 
 
-    # --- Remap the green channel image to the geographic grid ---
-    mapped = remap_scattered_to_grid(img, lat_use, lon_use, Lon, Lat, fill_nearest=fill_nearest)
-    mapped[~inside] = np.nan  # Mask out-of-footprint pixels
-    norm_green = np.clip(mapped / 255.0, 0, 1)  # Normalize to [0, 1] for display
-    mask = np.isfinite(mapped)
-    im_handle = ax.imshow(norm_green, origin="lower", extent=extent, transform=ccrs.PlateCarree(), zorder=1, alpha=mask.astype(float), cmap='viridis')
+    ## --- Remap the green channel image to the geographic grid ---
+    #mapped = remap_scattered_to_grid(img, lat_use, lon_use, Lon, Lat, fill_nearest=fill_nearest)
+    #mapped[~inside] = np.nan  # Mask out-of-footprint pixels
+    #norm_green = np.clip(mapped / 255.0, 0, 1)  # Normalize to [0, 1] for display
+    #mask = np.isfinite(mapped)
+    #im_handle = ax.imshow(norm_green, origin="lower", extent=extent, transform=ccrs.PlateCarree(), zorder=1, alpha=mask.astype(float), cmap='viridis')
+    img[mask] = np.nan
+    im_handle = ax.pcolormesh(lon, lat, img, transform=ccrs.PlateCarree())
+
+    imgv[maskv] = np.nan
+    im_handle = ax.pcolormesh(lonv, latv, imgv, transform=ccrs.PlateCarree())
 
     # --- Add colorbar and save the figure ---
     cbar = plt.colorbar(im_handle, ax=ax, orientation='vertical', pad=0.02, fraction=0.05)
     cbar.set_label('Green channel intensity (normalized)')
     plt.tight_layout()
-    output_path = "/Users/anniepflaum/ASI_mapping/mapped/PKR_realtime.png"
+    output_path = "PKR_realtime.png"
     plt.savefig(output_path, dpi=150)
     print(f"Saved mapped image to {output_path}")
 
