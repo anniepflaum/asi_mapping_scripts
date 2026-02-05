@@ -30,6 +30,7 @@ import cartopy.feature as cfeature
 import magcoordmap as mcm  # Leslie Lamarche's custom module for magnetic grid lines
 from PIL import Image
 from io import BytesIO
+import datetime as dt
 
 import check_intersect as ci
 
@@ -74,37 +75,37 @@ def normalize_lon(lon: np.ndarray, convention: str) -> np.ndarray:
     return lon
 
 
-# Create a regular output grid in lat/lon for remapping the ASI data
-def make_target_grid(lat: np.ndarray, lon: np.ndarray, nx: int, ny: int, padding_deg: float = 0.0):
-    good = np.isfinite(lat) & np.isfinite(lon)
-    lat_min, lat_max = np.nanmin(lat[good]), np.nanmax(lat[good])
-    lon_min, lon_max = np.nanmin(lon[good]), np.nanmax(lon[good])
-    lat_vec = np.linspace(lat_min - padding_deg, lat_max + padding_deg, ny)
-    lon_vec = np.linspace(lon_min - padding_deg, lon_max + padding_deg, nx)
-    Lon, Lat = np.meshgrid(lon_vec, lat_vec)
-    return Lon, Lat, lon_vec, lat_vec
-
-
-# Interpolate scattered ASI data (in image coordinates) onto the regular lat/lon grid
-def remap_scattered_to_grid(values_2d: np.ndarray,
-                            lat_2d: np.ndarray,
-                            lon_2d: np.ndarray,
-                            Lon: np.ndarray,
-                            Lat: np.ndarray,
-                            fill_nearest: bool = True) -> np.ndarray:
-    pts = np.column_stack([lon_2d.ravel(), lat_2d.ravel()])
-    vals = values_2d.ravel()
-    good = np.isfinite(pts).all(axis=1) & np.isfinite(vals)
-    pts = pts[good]
-    vals = vals[good]
-    lin = LinearNDInterpolator(pts, vals, fill_value=np.nan)
-    out = lin(Lon, Lat)
-    if fill_nearest:
-        nanmask = np.isnan(out)
-        if np.any(nanmask):
-            nn = NearestNDInterpolator(pts, vals)
-            out[nanmask] = nn(Lon[nanmask], Lat[nanmask])
-    return out.astype(np.float32)
+## Create a regular output grid in lat/lon for remapping the ASI data
+#def make_target_grid(lat: np.ndarray, lon: np.ndarray, nx: int, ny: int, padding_deg: float = 0.0):
+#    good = np.isfinite(lat) & np.isfinite(lon)
+#    lat_min, lat_max = np.nanmin(lat[good]), np.nanmax(lat[good])
+#    lon_min, lon_max = np.nanmin(lon[good]), np.nanmax(lon[good])
+#    lat_vec = np.linspace(lat_min - padding_deg, lat_max + padding_deg, ny)
+#    lon_vec = np.linspace(lon_min - padding_deg, lon_max + padding_deg, nx)
+#    Lon, Lat = np.meshgrid(lon_vec, lat_vec)
+#    return Lon, Lat, lon_vec, lat_vec
+#
+#
+## Interpolate scattered ASI data (in image coordinates) onto the regular lat/lon grid
+#def remap_scattered_to_grid(values_2d: np.ndarray,
+#                            lat_2d: np.ndarray,
+#                            lon_2d: np.ndarray,
+#                            Lon: np.ndarray,
+#                            Lat: np.ndarray,
+#                            fill_nearest: bool = True) -> np.ndarray:
+#    pts = np.column_stack([lon_2d.ravel(), lat_2d.ravel()])
+#    vals = values_2d.ravel()
+#    good = np.isfinite(pts).all(axis=1) & np.isfinite(vals)
+#    pts = pts[good]
+#    vals = vals[good]
+#    lin = LinearNDInterpolator(pts, vals, fill_value=np.nan)
+#    out = lin(Lon, Lat)
+#    if fill_nearest:
+#        nanmask = np.isnan(out)
+#        if np.any(nanmask):
+#            nn = NearestNDInterpolator(pts, vals)
+#            out[nanmask] = nn(Lon[nanmask], Lat[nanmask])
+#    return out.astype(np.float32)
 
 def main():
     # --- Parse command-line arguments ---
@@ -121,6 +122,8 @@ def main():
 #    # --- Load the geographic mapping for the ASI image ---
 #    lat, lon = load_skymap_latlon(args.skymap, args.alt_km)
 #    lon = normalize_lon(lon, args.lon_convention)
+
+    # --- Load geographic mapping for PKR ---
     filename = '/Users/e30737/Desktop/Research/SoP_DI/ASIspecinvert_test/starcal/PKR_pixel_coords.h5'
     site_lon = -147.43
     site_lat = 65.1192
@@ -131,6 +134,7 @@ def main():
         elev = h5['Elevation'][:]
         mask = h5['Mask'][:]
 
+    # --- Load geographic mapping for VEE ---
     filename = '/Users/e30737/Desktop/Research/SoP_DI/ASIspecinvert_test/starcal/VEE_pixel_coords.h5'
     site_lonv = -146.407
     site_latv = 67.013
@@ -141,10 +145,15 @@ def main():
         elevv = h5['Elevation'][:]
         maskv = h5['Mask'][:]
 
+
+    # --- Calculate mask for overlaping images
     m, mv = ci.calculate_masks(site_lat, site_lon, np.rad2deg(azmt), np.rad2deg(elev), site_latv, site_lonv, np.rad2deg(azmtv), np.rad2deg(elevv))
 
     mask = np.logical_or(mask, m)
     maskv = np.logical_or(maskv, mv)
+
+    
+    # SOME KIND OF LOOP HERE UPDATING DATA EVERY 15 SEC
 
     # --- Download the latest PKR green channel image (already single-channel) ---
     url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
@@ -160,6 +169,7 @@ def main():
     H, W = img.shape
 
     # --- Download the latest VEE green channel image (already single-channel) ---
+    # NOTE: This will only work after we get new skymap files from DH.  The one LL provided does not work with the realtime images.
     url = "https://optics.gi.alaska.edu/amisr_archive/VEE/GASI_5577/png/20260203/VEE_558_20260203_092814.png"
     #url = 'https://optics.gi.alaska.edu/realtime/latest/vee_latest.jpg'
     print(f"Downloading {url} ...")
@@ -188,6 +198,8 @@ def main():
 #    inside = np.isfinite(footprint) & (footprint > 0.5)
 #    footprint = inside.astype(np.float32)
 #    Lon, Lat = Lon.astype(np.float32), Lat.astype(np.float32)
+    img[mask] = np.nan
+    imgv[maskv] = np.nan
 
 
     # --- Set up the Cartopy map for plotting ---
@@ -216,8 +228,10 @@ def main():
         #lat2, lon2 = load_traj('/Users/anniepflaum/ASI_mapping/Traj_RightGneissDec25.txt')
         lat1, lon1 = load_traj('../Traj_Left.txt')
         lat2, lon2 = load_traj('../Traj_Right.txt')
-        ax.scatter(lon1, lat1, s=0.5, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=3)
-        ax.scatter(lon2, lat2, s=0.5, color='red', transform=ccrs.PlateCarree(), zorder=3)
+        #ax.scatter(lon1, lat1, s=0.5, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=3)
+        #ax.scatter(lon2, lat2, s=0.5, color='red', transform=ccrs.PlateCarree(), zorder=3)
+        ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=3)
+        ax.plot(lon2, lat2, color='red', transform=ccrs.PlateCarree(), zorder=3)
         ax.legend(loc='upper right')
     except Exception as e:
         print(f"Could not plot rocket trajectories: {e}")
@@ -229,11 +243,11 @@ def main():
     #norm_green = np.clip(mapped / 255.0, 0, 1)  # Normalize to [0, 1] for display
     #mask = np.isfinite(mapped)
     #im_handle = ax.imshow(norm_green, origin="lower", extent=extent, transform=ccrs.PlateCarree(), zorder=1, alpha=mask.astype(float), cmap='viridis')
-    img[mask] = np.nan
     im_handle = ax.pcolormesh(lon, lat, img, transform=ccrs.PlateCarree())
 
-    imgv[maskv] = np.nan
     im_handle = ax.pcolormesh(lonv, latv, imgv, transform=ccrs.PlateCarree())
+
+    txt = ax.text(0.99, 0.01, dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom', bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
 
     # --- Add colorbar and save the figure ---
     cbar = plt.colorbar(im_handle, ax=ax, orientation='vertical', pad=0.02, fraction=0.05)
