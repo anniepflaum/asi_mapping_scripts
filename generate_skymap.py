@@ -40,7 +40,6 @@ def azel2geo(site_lat, site_lon, az, el, alt=110.):
     x, y, z = pm.geodetic2ecef(site_lat, site_lon, 0.)
     e, n, u = pm.aer2enu(az, el, 1.)
     vx, vy, vz = pm.enu2uvw(e, n, u, site_lat, site_lon)
-    #vx, vy, vz = pm.enu2uvw(np.cos(el)*np.sin(az), np.cos(el)*np.cos(az), np.sin(el), site_lat, site_lon)
 
     earth = pm.Ellipsoid.from_name('wgs84')
     a2 = (earth.semimajor_axis + alt*1000.)**2
@@ -86,31 +85,10 @@ def load_PKR():
     
     azmap = np.rot90(fits.open('PKR_DASC_20220305_Az.FIT')[0].data,3).T
     elmap = np.rot90(fits.open('PKR_DASC_20220305_El.FIT')[0].data,3).T
-    #azmap = azmap[200:-200,200:-200]
-    #elmap = elmap[200:-200,200:-200]
 
-    #mask = np.where((azmap==0) & (elmap==0))
-    #mask = np.logical_and(azmap==0, elmap==0)
     mask = elmap<15.
 
-    #import matplotlib.pyplot as plt
-    #plt.pcolormesh(elmap)
-    #plt.colorbar()
-    #plt.show()
-
     return site_lat, site_lon, azmap, elmap, mask
-
-#glat, glon = azel2geo(site_lat, site_lon, azmap, elmap)
-##print(glat[np.isfinite(glat)], glon[np.isfinite(glon)])
-#
-#with h5py.File('skymap.h5', 'a') as h5:
-#    h5.create_group('PKR')
-#    h5.create_dataset('PKR/latitude', data=glat)
-#    h5.create_dataset('PKR/longitude', data=glon)
-#    h5.create_dataset('PKR/azimuth', data=azmap)
-#    h5.create_dataset('PKR/elevation', data=elmap)
-#    h5.create_dataset('PKR/site_coords', data=[site_lat, site_lon])
-
 
 
 
@@ -123,48 +101,27 @@ def load_VEE():
     azmap = dat['az_latest_512'].copy()
     elmap = dat['el_latest_512'].copy()
 
+    # Super hacky fix to interpolation across the az=0 line
+    # This is horrible code, do not repeat anywhere
     ul = [88, 109]
     lr = [247,288]
     i0,j0 = ul
     i1,j1 = lr
-
-    #import matplotlib.pyplot as plt
-    #plt.imshow(azmap)
-    #plt.show()
 
     ivec = np.arange(i1-i0) + i0
     m = (j1-j0)/(i1-i0)
     jvec = m*(ivec-i0) + j0
     jvec2 = jvec.astype(int)-4
     jvec3 = jvec.astype(int)+4
-    #plt.plot(ivec,jvec)
-    #plt.plot(ivec,jvec2)
-    #plt.plot(ivec,jvec3)
 
     for i in ivec:
         fix_area = azmap[jvec2[i-i0]:jvec3[i-i0],i]
         fix_area[(fix_area>10.) & (fix_area<350.)] = 0.
         azmap[jvec2[i-i0]:jvec3[i-i0],i] = fix_area
 
-    #plt.imshow(azmap)
-    #plt.show()
-
-    #mask = np.where((azmap==0) & (elmap==0))
-    #mask = np.logical_and(azmap<0.0, elmap==0)
     mask = elmap<15.
 
     return site_lat, site_lon, azmap, elmap, mask
-
-#glat, glon = azel2geo(site_lat, site_lon, azmap, elmap)
-##print(glat[np.isfinite(glat)], glon[np.isfinite(glon)])
-#
-#with h5py.File('skymap.h5', 'a') as h5:
-#    h5.create_group('VEE')
-#    h5.create_dataset('VEE/latitude', data=glat)
-#    h5.create_dataset('VEE/longitude', data=glon)
-#    h5.create_dataset('VEE/azimuth', data=azmap)
-#    h5.create_dataset('VEE/elevation', data=elmap)
-#    h5.create_dataset('VEE/site_coords', data=[site_lat, site_lon])
 
 
 
