@@ -130,9 +130,16 @@ def load_VEE():
 
 
 # Beaver
+def load_BVR():
+    site_lon, site_lat = [-147.4,    66.36]
 
-site_lon, site_lat = [-147.4,    66.36]
+    dat = readsav('BVR_558_latest_az_el_512.sav', python_dict=True)
+    azmap = dat['az_latest_512'].copy()
+    elmap = dat['el_latest_512'].copy()
 
+    mask = elmap<15.
+
+    return site_lat, site_lon, azmap, elmap, mask
 
 
 # Arctic Village
