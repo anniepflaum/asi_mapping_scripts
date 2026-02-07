@@ -116,7 +116,7 @@ def load_VEE():
 
     for i in ivec:
         fix_area = azmap[jvec2[i-i0]:jvec3[i-i0],i]
-        fix_area[(fix_area>10.) & (fix_area<350.)] = 0.
+        fix_area[(fix_area>5.) & (fix_area<355.)] = 0.
         azmap[jvec2[i-i0]:jvec3[i-i0],i] = fix_area
 
     #import matplotlib.pyplot as plt
@@ -137,6 +137,28 @@ def load_BVR():
     print(dat.keys())
     azmap = dat['az_latest_512_bvr'].copy()
     elmap = dat['el_latest_512_bvr'].copy()
+
+    # Super hacky fix to interpolation across the az=0 line
+    # This is horrible code, do not repeat anywhere
+    ul = [47, 158]
+    lr = [248,290]
+    i0,j0 = ul
+    i1,j1 = lr
+
+    ivec = np.arange(i1-i0) + i0
+    m = (j1-j0)/(i1-i0)
+    jvec = m*(ivec-i0) + j0
+    jvec2 = jvec.astype(int)-3
+    jvec3 = jvec.astype(int)+3
+
+    for i in ivec:
+        fix_area = azmap[jvec2[i-i0]:jvec3[i-i0],i]
+        fix_area[(fix_area>5.) & (fix_area<355.)] = 0.
+        azmap[jvec2[i-i0]:jvec3[i-i0],i] = fix_area
+
+    #import matplotlib.pyplot as plt
+    #plt.imshow(azmap)
+    #plt.show()
 
     mask = elmap<15.
 

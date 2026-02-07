@@ -26,6 +26,7 @@ import h5py
 from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
 import requests
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import magcoordmap as mcm  # Leslie Lamarche's custom module for magnetic grid lines
@@ -164,7 +165,9 @@ def main():
     # --- Set up the Cartopy map for plotting ---
     proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
     fig = plt.figure(figsize=(6, 5))
-    ax = plt.axes(projection=proj)
+    gs = gridspec.GridSpec(4,2, width_ratios=[4,1])
+    #ax = plt.axes(projection=proj)
+    ax = fig.add_subplot(gs[:,0], projection=proj)
     ax.set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
     ax.add_feature(cfeature.LAND.with_scale("50m"), zorder=0)
     ax.add_feature(cfeature.OCEAN.with_scale("50m"), zorder=0)
@@ -173,6 +176,14 @@ def main():
     #extent = (float(np.nanmin(Lon)), float(np.nanmax(Lon)), float(np.nanmin(Lat)), float(np.nanmax(Lat)))
     ax.set_title("PKR ASI latest green channel mapped to geographic lat/lon")
     mgl = mcm.maggridlines(ax)
+
+#    ax1 = {k:fig.add_subplot(gs[i,1], projection=proj) for k, i in enumerate(imgs.keys())}
+    ax1 = dict()
+    for i, k in enumerate(imgs.keys()):
+        ax1[k] = fig.add_subplot(gs[i,1], projection=proj)
+        ax1[k].coastlines()
+        ax1[k].gridlines()
+        ax1[k].set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
 
 
     # --- Overlay rocket trajectories from text files (if available) ---
@@ -222,9 +233,9 @@ def main():
     for site, img in imgs.items():
         print(site)
 
-        if site != 'VEE':
-            print(f'skipping {site}')
-            continue
+        #if site != 'PKR':
+        #    print(f'skipping {site}')
+        #    continue
 
         # apply mask
         img[skymaps[site]['mask']] = np.nan
@@ -255,19 +266,24 @@ def main():
 
 
 
-        ############################
-        # THIS WORKS BUT SLOW
-        img_flat = img[~skymaps[site]['mask']].flatten()
-        lon_flat = skymaps[site]['lon'][~skymaps[site]['mask']].flatten()
-        lat_flat = skymaps[site]['lat'][~skymaps[site]['mask']].flatten()
+        #############################
+        ## THIS WORKS BUT SLOW
+        #img_flat = img[~skymaps[site]['mask']].flatten()
+        #lon_flat = skymaps[site]['lon'][~skymaps[site]['mask']].flatten()
+        #lat_flat = skymaps[site]['lat'][~skymaps[site]['mask']].flatten()
 
-        im_handle = ax.tripcolor(lon_flat, lat_flat, img_flat, zorder=3, transform=ccrs.PlateCarree())
+        #im_handle = ax.tripcolor(lon_flat, lat_flat, img_flat, zorder=3, transform=ccrs.PlateCarree())
+
+        #ax1[site].tripcolor(lon_flat, lat_flat, img_flat, transform=ccrs.PlateCarree())
+        #ax1[site].set_title(site)
         ##############################
 
 
         #im_handle = ax.contourf(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
-        #im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
+        im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
 
+        ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
+        ax1[site].set_title(site)
 
     #pfisr_file = '../fitted-20260207-052404.h5'
     #with h5py.File(pfisr_file, 'r') as h5:
