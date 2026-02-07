@@ -233,13 +233,46 @@ def main():
         #im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
 
 
-    #pfisr_file = '../fitted-20260207-052404.h5'
-    #with h5py.File(pfisr_file, 'r') as h5:
-    #    ne = h5['FittedParams/Ne'][:]
-    #    glat = h5['Geomag/Latitude'][:]
-    #    glon = h5['Geomag/Longitude'][:]
+    import paramiko
+    from scp import SCPClient
+    
+    # Remote server credentials
+    hostname = 'amisr-rtp1'
+    port = 22
+    username = 'radar'
+    password = 'amisrnet0'  
+    
+    # File to be copied
+    local_file_path = 'pfisr_latest.hdf5'
+    remote_path = '/data/transport/cache/processing/fitted/single/dtc3/fitted-20260207-083627.h5'
+    
+    # Create SSH client
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    
+    # Connect to the server
+    ssh.connect(hostname=hostname, port=port, username=username, password=password)
+    
+    # SCP file transfer
+    with SCPClient(ssh.get_transport()) as scp:
+       scp.put(local_file_path, remote_path)
+    
+    print("File copied successfully!")
+    
+    #except Exception as e:
+    #   print(f"Error: {e}")
+    #
+    #finally:
+    ssh.close()
+    
 
-    #ax.scatter(glon, glat, c=ne, zorder=6, transform=ccrs.Geodetic())
+    pfisr_file = '../pfisr_latest.h5'
+    with h5py.File(pfisr_file, 'r') as h5:
+        ne = h5['FittedParams/Ne'][:]
+        glat = h5['Geomag/Latitude'][:]
+        glon = h5['Geomag/Longitude'][:]
+
+    ax.scatter(glon, glat, c=ne, zorder=6, transform=ccrs.Geodetic())
 
 
     txt = ax.text(0.99, 0.01, dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom', bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
