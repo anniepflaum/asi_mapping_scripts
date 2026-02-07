@@ -134,8 +134,9 @@ def load_BVR():
     site_lon, site_lat = [-147.4,    66.36]
 
     dat = readsav('BVR_558_latest_az_el_512.sav', python_dict=True)
-    azmap = dat['az_latest_512'].copy()
-    elmap = dat['el_latest_512'].copy()
+    print(dat.keys())
+    azmap = dat['az_latest_512_bvr'].copy()
+    elmap = dat['el_latest_512_bvr'].copy()
 
     mask = elmap<15.
 

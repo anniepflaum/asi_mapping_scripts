@@ -48,6 +48,9 @@ def load_skymaps():
     lat, lon, az, el, mask = skymap.load_VEE()
     skymaps['VEE'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
 
+    lat, lon, az, el, mask = skymap.load_BVR()
+    skymaps['BVR'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
+
     for sm in skymaps.values():
         lat, lon = skymap.azel2geo(sm['site_lat'], sm['site_lon'], sm['azmt'], sm['elev'], alt=110.)
         sm['lat'] = lat
@@ -56,6 +59,17 @@ def load_skymaps():
     return skymaps
 
 
+def retrieve_image(url):
+
+    print(f"Downloading {url} ...")
+    resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
+    resp.raise_for_status()
+    img = Image.open(BytesIO(resp.content))
+    img = np.asarray(img)
+    if img.ndim == 3:
+        # If image is RGB, take only one channel (shouldn't be needed, but for safety)
+        img = img[:, :, 0]
+    return img.astype(np.float32)
 
 
 def main():
@@ -99,30 +113,51 @@ def main():
 
     # --- Download the latest PKR green channel image (already single-channel) ---
     url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
-    print(f"Downloading {url} ...")
-    resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
-    resp.raise_for_status()
-    img = Image.open(BytesIO(resp.content))
-    img = np.asarray(img)
-    if img.ndim == 3:
-        # If image is RGB, take only one channel (shouldn't be needed, but for safety)
-        img = img[:, :, 0]
-    imgs['PKR'] = img.astype(np.float32)
+    imgs['PKR'] = retrieve_image(url)
+    #print(f"Downloading {url} ...")
+    #resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
+    #resp.raise_for_status()
+    #img = Image.open(BytesIO(resp.content))
+    #img = np.asarray(img)
+    #if img.ndim == 3:
+    #    # If image is RGB, take only one channel (shouldn't be needed, but for safety)
+    #    img = img[:, :, 0]
+    #imgs['PKR'] = img.astype(np.float32)
 
     # --- Download the latest VEE green channel image (already single-channel) ---
     # NOTE: This will only work after we get new skymap files from DH.  The one LL provided does not work with the realtime images.
     #url = "https://optics.gi.alaska.edu/amisr_archive/VEE/GASI_5577/png/20260203/VEE_558_20260203_092814.png"
     #url = 'https://optics.gi.alaska.edu/realtime/latest/vee_latest.jpg'
     url = 'https://optics.gi.alaska.edu/realtime/latest/vee_558_latest.jpg'
-    print(f"Downloading {url} ...")
-    resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
-    resp.raise_for_status()
-    imgv = Image.open(BytesIO(resp.content))
-    imgv = np.asarray(imgv)
-    if imgv.ndim == 3:
-        # If image is RGB, take only one channel (shouldn't be needed, but for safety)
-        imgv = imgv[:, :, 0]
-    imgs['VEE'] = imgv.astype(np.float32)
+    imgs['VEE'] = retrieve_image(url)
+    #print(f"Downloading {url} ...")
+    #resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
+    #resp.raise_for_status()
+    #imgv = Image.open(BytesIO(resp.content))
+    #imgv = np.asarray(imgv)
+    #if imgv.ndim == 3:
+    #    # If image is RGB, take only one channel (shouldn't be needed, but for safety)
+    #    imgv = imgv[:, :, 0]
+    #imgs['VEE'] = imgv.astype(np.float32)
+
+
+    # --- Download the latest BVR green channel image (already single-channel) ---
+    #url = 'https://optics.gi.alaska.edu/bvr_558_real.html'
+    url = 'https://optics.gi.alaska.edu/realtime/latest/bvr_558_latest.jpg'
+    imgs['BVR'] = retrieve_image(url)
+    #print(f"Downloading {url} ...")
+    #resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
+    #resp.raise_for_status()
+    #img = Image.open(BytesIO(resp.content))
+    #img = np.asarray(img)
+    #if img.ndim == 3:
+    #    # If image is RGB, take only one channel (shouldn't be needed, but for safety)
+    #    img = img[:, :, 0]
+    ##img = np.flipud(img)
+    #imgs['BVR'] = img.astype(np.float32)
+
+
+
 
 
 
@@ -187,7 +222,8 @@ def main():
     for site, img in imgs.items():
         print(site)
 
-        if site == 'VEE':
+        if site != 'VEE':
+            print(f'skipping {site}')
             continue
 
         # apply mask
