@@ -72,6 +72,13 @@ def main():
 
 #    # --- Load the geographic mapping for the ASI image ---
     skymaps = load_skymaps()
+    ## Export skymap arrays
+    #import h5py
+    #with h5py.File('extrapolate_grid.h5', 'w') as h5:
+    #    for site in skymaps.keys():
+    #        g = h5.create_group(site)
+    #        for k, v in skymaps[site].items():
+    #            g.create_dataset(k, data=v)
     # debugging check
     #for k, v in skymaps.items():
     #    print(k, v.keys())
@@ -82,11 +89,11 @@ def main():
 
 
 
-    # --- Calculate mask for overlaping images
-    # need to generalize
-    mp, mv = ci.calculate_masks(skymaps['PKR']['site_lat'], skymaps['PKR']['site_lon'], skymaps['PKR']['azmt'], skymaps['PKR']['elev'], skymaps['VEE']['site_lat'], skymaps['VEE']['site_lon'], skymaps['VEE']['azmt'], skymaps['VEE']['elev'])
-    skymaps['PKR']['mask'] = np.logical_or(skymaps['PKR']['mask'], mp)
-    skymaps['VEE']['mask'] = np.logical_or(skymaps['VEE']['mask'], mv)
+    ## --- Calculate mask for overlaping images
+    ## need to generalize
+    #mp, mv = ci.calculate_masks(skymaps['PKR']['site_lat'], skymaps['PKR']['site_lon'], skymaps['PKR']['azmt'], skymaps['PKR']['elev'], skymaps['VEE']['site_lat'], skymaps['VEE']['site_lon'], skymaps['VEE']['azmt'], skymaps['VEE']['elev'])
+    #skymaps['PKR']['mask'] = np.logical_or(skymaps['PKR']['mask'], mp)
+    #skymaps['VEE']['mask'] = np.logical_or(skymaps['VEE']['mask'], mv)
 
     imgs = dict()
 
@@ -136,17 +143,42 @@ def main():
     # --- Overlay rocket trajectories from text files (if available) ---
     def load_traj(filename):
         # Load latitude and longitude columns from a trajectory text file
-        data = np.loadtxt(filename, skiprows=1, usecols=(1,2))
-        lats, lons = data[:,0], data[:,1]
-        return lats, lons
+        #times, lats, lons = np.loadtxt(filename, skiprows=1, usecols=(0,1,2), unpack=True)
+        times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
+        # Rocket trajectories every minute
+        idx = np.argwhere(times % 60 == 0)
+        timem = times[idx].squeeze()
+        latsm = lats[idx].squeeze()
+        lonsm = lons[idx].squeeze()
+        #galtm = galt_l[idx].squeeze()
+        #idx = np.argwhere(time_r % 60 == 0)
+        #time_rm = time_r[idx].squeeze()
+        #glat_rm = glat_r[idx].squeeze()
+        #glon_rm = glon_r[idx].squeeze()
+        #galt_rm = galt_r[idx].squeeze()
+        #idx = np.argwhere(time_b % 60 == 0)
+        #time_bm = time_b[idx].squeeze()
+        #glat_bm = glat_b[idx].squeeze()
+        #glon_bm = glon_b[idx].squeeze()
+        #galt_bm = galt_b[idx].squeeze()
+        aidx = np.argmax(alts)
+        lata = lats[aidx]
+        lona = lons[aidx]
+
+
+        return lats, lons, latsm, lonsm, lata, lona
 
     try:
         #lat1, lon1 = load_traj('/Users/anniepflaum/ASI_mapping/Traj_LeftGneissDec25.txt')
         #lat2, lon2 = load_traj('/Users/anniepflaum/ASI_mapping/Traj_RightGneissDec25.txt')
-        lat1, lon1 = load_traj('../Traj_Left.txt')
-        lat2, lon2 = load_traj('../Traj_Right.txt')
-        ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=3)
-        ax.plot(lon2, lat2, color='red', transform=ccrs.PlateCarree(), zorder=3)
+        lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
+        lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
+        ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=7)
+        ax.scatter(lonm1, latm1, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
+        ax.scatter(lona1, lata1, color='magenta', marker='x', transform=ccrs.PlateCarree(), zorder=8)
+        ax.plot(lon2, lat2, color='red', transform=ccrs.PlateCarree(), zorder=7)
+        ax.scatter(lonm2, latm2, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
+        ax.scatter(lona2, lata2, color='magenta', marker='x', transform=ccrs.PlateCarree(), zorder=8)
         ax.legend(loc='upper right')
     except Exception as e:
         print(f"Could not plot rocket trajectories: {e}")
@@ -155,18 +187,59 @@ def main():
     for site, img in imgs.items():
         print(site)
 
+        if site == 'VEE':
+            continue
+
         # apply mask
         img[skymaps[site]['mask']] = np.nan
 
+        #lat = skymaps[site]['lat'].copy()
+        #lon = skymaps[site]['lon'].copy()
+        #lat[skymaps[site]['mask']] = np.nan
+        #lon[skymaps[site]['mask']] = np.nan
+
+        #w, h = img.shape
+        #lon = np.insert(lon, 0, np.full(h, np.nan), axis=0)
+        #lon = np.insert(lon, 0, np.full(w+1, np.nan), axis=1)
+        #lat = np.insert(lat, 0, np.full(h, np.nan), axis=0)
+        #lat = np.insert(lat, 0, np.full(w+1, np.nan), axis=1)
+
+        #print(img.shape, lat.shape, lon.shape)
+
+        #fig, [ax1, ax2, ax3, ax4] = plt.subplots(1,4)
+        #ax1.imshow(lat)
+        #ax2.imshow(lon)
+        #ax3.imshow(img)
+        #ax4.pcolor(lon, lat, img)
+        #plt.show()
+
 
         #im_handle = ax.pcolormesh(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
+        #im_handle = ax.pcolor(lon, lat, img, transform=ccrs.PlateCarree())
+
+
+
+        ############################
+        # THIS WORKS BUT SLOW
         img_flat = img[~skymaps[site]['mask']].flatten()
         lon_flat = skymaps[site]['lon'][~skymaps[site]['mask']].flatten()
         lat_flat = skymaps[site]['lat'][~skymaps[site]['mask']].flatten()
 
-        im_handle = ax.tripcolor(lon_flat, lat_flat, img_flat, transform=ccrs.PlateCarree())
+        im_handle = ax.tripcolor(lon_flat, lat_flat, img_flat, zorder=3, transform=ccrs.PlateCarree())
+        ##############################
+
+
         #im_handle = ax.contourf(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
         #im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
+
+
+    #pfisr_file = '../fitted-20260207-052404.h5'
+    #with h5py.File(pfisr_file, 'r') as h5:
+    #    ne = h5['FittedParams/Ne'][:]
+    #    glat = h5['Geomag/Latitude'][:]
+    #    glon = h5['Geomag/Longitude'][:]
+
+    #ax.scatter(glon, glat, c=ne, zorder=6, transform=ccrs.Geodetic())
 
 
     txt = ax.text(0.99, 0.01, dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom', bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
@@ -178,7 +251,7 @@ def main():
     output_path = "PKR_realtime.png"
     plt.savefig(output_path, dpi=150)
     print(f"Saved mapped image to {output_path}")
-    #plt.show()
+    plt.show()
 
 if __name__ == "__main__":
     main()
