@@ -104,11 +104,11 @@ def main():
 
 
 
-    ## --- Calculate mask for overlaping images
-    ## need to generalize
-    #mp, mv = ci.calculate_masks(skymaps['PKR']['site_lat'], skymaps['PKR']['site_lon'], skymaps['PKR']['azmt'], skymaps['PKR']['elev'], skymaps['VEE']['site_lat'], skymaps['VEE']['site_lon'], skymaps['VEE']['azmt'], skymaps['VEE']['elev'])
-    #skymaps['PKR']['mask'] = np.logical_or(skymaps['PKR']['mask'], mp)
-    #skymaps['VEE']['mask'] = np.logical_or(skymaps['VEE']['mask'], mv)
+    # --- Calculate mask for overlaping images
+    # need to generalize
+    mp, mv = ci.calculate_masks(skymaps['PKR']['site_lat'], skymaps['PKR']['site_lon'], skymaps['PKR']['azmt'], skymaps['PKR']['elev'], skymaps['VEE']['site_lat'], skymaps['VEE']['site_lon'], skymaps['VEE']['azmt'], skymaps['VEE']['elev'])
+    skymaps['PKR']['mask'] = np.logical_or(skymaps['PKR']['mask'], mp)
+    skymaps['VEE']['mask'] = np.logical_or(skymaps['VEE']['mask'], mv)
 
     imgs = dict()
 
@@ -233,9 +233,9 @@ def main():
     for site, img in imgs.items():
         print(site)
 
-        #if site != 'PKR':
-        #    print(f'skipping {site}')
-        #    continue
+        if site == 'BVR':
+            print(f'skipping {site}')
+            continue
 
         # apply mask
         img[skymaps[site]['mask']] = np.nan
