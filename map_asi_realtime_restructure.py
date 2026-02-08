@@ -87,20 +87,6 @@ def main():
 
 #    # --- Load the geographic mapping for the ASI image ---
     skymaps = load_skymaps()
-    ## Export skymap arrays
-    #import h5py
-    #with h5py.File('extrapolate_grid.h5', 'w') as h5:
-    #    for site in skymaps.keys():
-    #        g = h5.create_group(site)
-    #        for k, v in skymaps[site].items():
-    #            g.create_dataset(k, data=v)
-    # debugging check
-    #for k, v in skymaps.items():
-    #    print(k, v.keys())
-    #    print(v['lon'][0,0])
-    #    plt.pcolormesh(v['lon'])
-    #    plt.colorbar()
-    #    plt.show()
 
 
 
@@ -115,48 +101,15 @@ def main():
     # --- Download the latest PKR green channel image (already single-channel) ---
     url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
     imgs['PKR'] = retrieve_image(url)
-    #print(f"Downloading {url} ...")
-    #resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
-    #resp.raise_for_status()
-    #img = Image.open(BytesIO(resp.content))
-    #img = np.asarray(img)
-    #if img.ndim == 3:
-    #    # If image is RGB, take only one channel (shouldn't be needed, but for safety)
-    #    img = img[:, :, 0]
-    #imgs['PKR'] = img.astype(np.float32)
 
     # --- Download the latest VEE green channel image (already single-channel) ---
-    # NOTE: This will only work after we get new skymap files from DH.  The one LL provided does not work with the realtime images.
-    #url = "https://optics.gi.alaska.edu/amisr_archive/VEE/GASI_5577/png/20260203/VEE_558_20260203_092814.png"
-    #url = 'https://optics.gi.alaska.edu/realtime/latest/vee_latest.jpg'
     url = 'https://optics.gi.alaska.edu/realtime/latest/vee_558_latest.jpg'
     imgs['VEE'] = retrieve_image(url)
-    #print(f"Downloading {url} ...")
-    #resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
-    #resp.raise_for_status()
-    #imgv = Image.open(BytesIO(resp.content))
-    #imgv = np.asarray(imgv)
-    #if imgv.ndim == 3:
-    #    # If image is RGB, take only one channel (shouldn't be needed, but for safety)
-    #    imgv = imgv[:, :, 0]
-    #imgs['VEE'] = imgv.astype(np.float32)
 
 
     # --- Download the latest BVR green channel image (already single-channel) ---
-    #url = 'https://optics.gi.alaska.edu/bvr_558_real.html'
     url = 'https://optics.gi.alaska.edu/realtime/latest/bvr_558_latest.jpg'
     imgs['BVR'] = retrieve_image(url)
-    #print(f"Downloading {url} ...")
-    #resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
-    #resp.raise_for_status()
-    #img = Image.open(BytesIO(resp.content))
-    #img = np.asarray(img)
-    #if img.ndim == 3:
-    #    # If image is RGB, take only one channel (shouldn't be needed, but for safety)
-    #    img = img[:, :, 0]
-    ##img = np.flipud(img)
-    #imgs['BVR'] = img.astype(np.float32)
-
 
 
 
@@ -164,7 +117,7 @@ def main():
 
     # --- Set up the Cartopy map for plotting ---
     proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
-    fig = plt.figure(figsize=(6, 5))
+    fig = plt.figure(figsize=(15, 10))
     gs = gridspec.GridSpec(4,2, width_ratios=[4,1])
     #ax = plt.axes(projection=proj)
     ax = fig.add_subplot(gs[:,0], projection=proj)
@@ -177,7 +130,7 @@ def main():
     ax.set_title("PKR ASI latest green channel mapped to geographic lat/lon")
     mgl = mcm.maggridlines(ax)
 
-#    ax1 = {k:fig.add_subplot(gs[i,1], projection=proj) for k, i in enumerate(imgs.keys())}
+    # --- Setup sidebar plots ---
     ax1 = dict()
     for i, k in enumerate(imgs.keys()):
         ax1[k] = fig.add_subplot(gs[i,1], projection=proj)
@@ -189,34 +142,19 @@ def main():
     # --- Overlay rocket trajectories from text files (if available) ---
     def load_traj(filename):
         # Load latitude and longitude columns from a trajectory text file
-        #times, lats, lons = np.loadtxt(filename, skiprows=1, usecols=(0,1,2), unpack=True)
         times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
         # Rocket trajectories every minute
         idx = np.argwhere(times % 60 == 0)
         timem = times[idx].squeeze()
-        latsm = lats[idx].squeeze()
-        lonsm = lons[idx].squeeze()
-        #galtm = galt_l[idx].squeeze()
-        #idx = np.argwhere(time_r % 60 == 0)
-        #time_rm = time_r[idx].squeeze()
-        #glat_rm = glat_r[idx].squeeze()
-        #glon_rm = glon_r[idx].squeeze()
-        #galt_rm = galt_r[idx].squeeze()
-        #idx = np.argwhere(time_b % 60 == 0)
-        #time_bm = time_b[idx].squeeze()
-        #glat_bm = glat_b[idx].squeeze()
-        #glon_bm = glon_b[idx].squeeze()
-        #galt_bm = galt_b[idx].squeeze()
+        latsm = lats[idx].squeeze()     # lat every minute
+        lonsm = lons[idx].squeeze()     # lon every minute
         aidx = np.argmax(alts)
-        lata = lats[aidx]
-        lona = lons[aidx]
-
+        lata = lats[aidx]       # lat of appogee
+        lona = lons[aidx]       # lon of appogee
 
         return lats, lons, latsm, lonsm, lata, lona
 
     try:
-        #lat1, lon1 = load_traj('/Users/anniepflaum/ASI_mapping/Traj_LeftGneissDec25.txt')
-        #lat2, lon2 = load_traj('/Users/anniepflaum/ASI_mapping/Traj_RightGneissDec25.txt')
         lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
         lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
         ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=7)
@@ -240,31 +178,6 @@ def main():
         # apply mask
         img[skymaps[site]['mask']] = np.nan
 
-        #lat = skymaps[site]['lat'].copy()
-        #lon = skymaps[site]['lon'].copy()
-        #lat[skymaps[site]['mask']] = np.nan
-        #lon[skymaps[site]['mask']] = np.nan
-
-        #w, h = img.shape
-        #lon = np.insert(lon, 0, np.full(h, np.nan), axis=0)
-        #lon = np.insert(lon, 0, np.full(w+1, np.nan), axis=1)
-        #lat = np.insert(lat, 0, np.full(h, np.nan), axis=0)
-        #lat = np.insert(lat, 0, np.full(w+1, np.nan), axis=1)
-
-        #print(img.shape, lat.shape, lon.shape)
-
-        #fig, [ax1, ax2, ax3, ax4] = plt.subplots(1,4)
-        #ax1.imshow(lat)
-        #ax2.imshow(lon)
-        #ax3.imshow(img)
-        #ax4.pcolor(lon, lat, img)
-        #plt.show()
-
-
-        #im_handle = ax.pcolormesh(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
-        #im_handle = ax.pcolor(lon, lat, img, transform=ccrs.PlateCarree())
-
-
 
         #############################
         ## THIS WORKS BUT SLOW
@@ -279,7 +192,6 @@ def main():
         ##############################
 
 
-        #im_handle = ax.contourf(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
         im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
 
         ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
@@ -295,7 +207,7 @@ def main():
         for chunk in resp.iter_content(chunk_size=128):
             fd.write(chunk)
    
-
+    # --- Plot the PFISR data ---
     pfisr_file = 'pfisr_latest.h5'
     with h5py.File(pfisr_file, 'r') as h5:
         ne = h5['FittedParams/Ne'][:]
