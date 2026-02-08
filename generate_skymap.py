@@ -163,6 +163,9 @@ def load_BVR():
     #plt.imshow(azmap)
     #plt.show()
 
+    azmap = azmap-24.
+    azmap[azmap<=0.] += 360.
+
     mask = elmap<15.
 
     return site_lat, site_lon, azmap, elmap, mask

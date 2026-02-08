@@ -92,9 +92,21 @@ def main():
 
     # --- Calculate mask for overlaping images
     # need to generalize
-    mp, mv = ci.calculate_masks(skymaps['PKR']['site_lat'], skymaps['PKR']['site_lon'], skymaps['PKR']['azmt'], skymaps['PKR']['elev'], skymaps['VEE']['site_lat'], skymaps['VEE']['site_lon'], skymaps['VEE']['azmt'], skymaps['VEE']['elev'])
-    skymaps['PKR']['mask'] = np.logical_or(skymaps['PKR']['mask'], mp)
-    skymaps['VEE']['mask'] = np.logical_or(skymaps['VEE']['mask'], mv)
+    #mp, mv = ci.calculate_masks(skymaps['PKR']['site_lat'], skymaps['PKR']['site_lon'], skymaps['PKR']['azmt'], skymaps['PKR']['elev'], skymaps['VEE']['site_lat'], skymaps['VEE']['site_lon'], skymaps['VEE']['azmt'], skymaps['VEE']['elev'])
+    #skymaps['PKR']['mask'] = np.logical_or(skymaps['PKR']['mask'], mp)
+    #skymaps['VEE']['mask'] = np.logical_or(skymaps['VEE']['mask'], mv)
+
+    sites = list(skymaps.keys())
+    for s0 in sites:
+        red_sites = sites.copy()
+        red_sites.remove(s0)
+        print(s0)
+        print(red_sites)
+        skymaps[s0]['extra_masks'] = dict()
+        for s1 in red_sites:
+            m0, m1 = ci.calculate_masks(skymaps[s0]['site_lat'], skymaps[s0]['site_lon'], skymaps[s0]['azmt'], skymaps[s0]['elev'], skymaps[s1]['site_lat'], skymaps[s1]['site_lon'], skymaps[s1]['azmt'], skymaps[s1]['elev'])
+
+            skymaps[s0]['extra_masks'][s1] = m0
 
 
     imgs = dict()
@@ -111,7 +123,9 @@ def main():
 
     # --- Download the latest BVR green channel image (already single-channel) ---
     url = 'https://optics.gi.alaska.edu/realtime/latest/bvr_558_latest.jpg'
-    imgs['BVR'] = retrieve_image(url)
+    #imgs['BVR'] = retrieve_image(url)
+    im = retrieve_image(url)
+    imgs['BVR'] = np.flipud(im)
 
 
 
@@ -173,13 +187,18 @@ def main():
     for site, img in imgs.items():
         print(site)
 
-        if site == 'BVR':
-            print(f'skipping {site}')
-            continue
+        #if site == 'BVR':
+        #    print(f'skipping {site}')
+        #    continue
 
         # apply mask
         img[skymaps[site]['mask']] = np.nan
 
+        im = img.copy()
+        lat = skymaps[site]['lat'].copy()
+        lon = skymaps[site]['lon'].copy()
+        for m in skymaps[site]['extra_masks'].values():
+            im[m] = np.nan
 
         ############################
         # THIS WORKS BUT SLOW
@@ -187,9 +206,14 @@ def main():
         lon_flat = skymaps[site]['lon'][~skymaps[site]['mask']].flatten()
         lat_flat = skymaps[site]['lat'][~skymaps[site]['mask']].flatten()
 
-        im_handle = ax.tripcolor(lon_flat, lat_flat, img_flat, zorder=3, transform=ccrs.PlateCarree())
+        im_handle = ax1[site].tripcolor(lon_flat, lat_flat, img_flat, vmin=0, vmax=60, zorder=3, transform=ccrs.PlateCarree())
 
-        ax1[site].tripcolor(lon_flat, lat_flat, img_flat, transform=ccrs.PlateCarree())
+        imf = im[np.isfinite(im)].flatten()
+        latf = lat[np.isfinite(im)].flatten()
+        lonf = lon[np.isfinite(im)].flatten()
+
+        #ax1[site].tripcolor(lon_flat, lat_flat, img_flat, transform=ccrs.PlateCarree())
+        ax.tripcolor(lonf, latf, imf, vmin=0, vmax=60, transform=ccrs.PlateCarree())
         ax1[site].set_title(site)
         #############################
 
