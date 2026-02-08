@@ -96,6 +96,7 @@ def main():
     skymaps['PKR']['mask'] = np.logical_or(skymaps['PKR']['mask'], mp)
     skymaps['VEE']['mask'] = np.logical_or(skymaps['VEE']['mask'], mv)
 
+
     imgs = dict()
 
     # --- Download the latest PKR green channel image (already single-channel) ---
@@ -104,7 +105,8 @@ def main():
 
     # --- Download the latest VEE green channel image (already single-channel) ---
     url = 'https://optics.gi.alaska.edu/realtime/latest/vee_558_latest.jpg'
-    imgs['VEE'] = retrieve_image(url)
+    im = retrieve_image(url)
+    imgs['VEE'] = np.flipud(im)
 
 
     # --- Download the latest BVR green channel image (already single-channel) ---
@@ -179,23 +181,23 @@ def main():
         img[skymaps[site]['mask']] = np.nan
 
 
-        #############################
-        ## THIS WORKS BUT SLOW
-        #img_flat = img[~skymaps[site]['mask']].flatten()
-        #lon_flat = skymaps[site]['lon'][~skymaps[site]['mask']].flatten()
-        #lat_flat = skymaps[site]['lat'][~skymaps[site]['mask']].flatten()
+        ############################
+        # THIS WORKS BUT SLOW
+        img_flat = img[~skymaps[site]['mask']].flatten()
+        lon_flat = skymaps[site]['lon'][~skymaps[site]['mask']].flatten()
+        lat_flat = skymaps[site]['lat'][~skymaps[site]['mask']].flatten()
 
-        #im_handle = ax.tripcolor(lon_flat, lat_flat, img_flat, zorder=3, transform=ccrs.PlateCarree())
+        im_handle = ax.tripcolor(lon_flat, lat_flat, img_flat, zorder=3, transform=ccrs.PlateCarree())
 
-        #ax1[site].tripcolor(lon_flat, lat_flat, img_flat, transform=ccrs.PlateCarree())
-        #ax1[site].set_title(site)
-        ##############################
-
-
-        im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
-
-        ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
+        ax1[site].tripcolor(lon_flat, lat_flat, img_flat, transform=ccrs.PlateCarree())
         ax1[site].set_title(site)
+        #############################
+
+
+        #im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
+
+        #ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
+        #ax1[site].set_title(site)
 
 
     # --- Download the PFISR data ---

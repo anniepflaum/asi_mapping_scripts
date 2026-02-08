@@ -119,6 +119,9 @@ def load_VEE():
         fix_area[(fix_area>5.) & (fix_area<355.)] = 0.
         azmap[jvec2[i-i0]:jvec3[i-i0],i] = fix_area
 
+    azmap = azmap-24.
+    azmap[azmap<=0.] += 360.
+
     #import matplotlib.pyplot as plt
     #plt.imshow(azmap)
     #plt.show()
