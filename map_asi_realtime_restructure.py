@@ -285,13 +285,24 @@ def main():
         ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, transform=ccrs.PlateCarree())
         ax1[site].set_title(site)
 
-    #pfisr_file = '../fitted-20260207-052404.h5'
-    #with h5py.File(pfisr_file, 'r') as h5:
-    #    ne = h5['FittedParams/Ne'][:]
-    #    glat = h5['Geomag/Latitude'][:]
-    #    glon = h5['Geomag/Longitude'][:]
 
-    #ax.scatter(glon, glat, c=ne, zorder=6, transform=ccrs.Geodetic())
+    # --- Download the PFISR data ---
+    url = "https://amisr.com/realtime/plots/fitted/single/dtc3/current.h5"
+    print(f"Downloading {url} ...")
+    resp = requests.get(url, stream=True)  # verify=False disables SSL cert check (safe for public data)
+    resp.raise_for_status()
+    with open('pfisr_latest.h5', 'wb') as fd:
+        for chunk in resp.iter_content(chunk_size=128):
+            fd.write(chunk)
+   
+
+    pfisr_file = 'pfisr_latest.h5'
+    with h5py.File(pfisr_file, 'r') as h5:
+        ne = h5['FittedParams/Ne'][:]
+        glat = h5['Geomag/Latitude'][:]
+        glon = h5['Geomag/Longitude'][:]
+
+    ax.scatter(glon, glat, c=ne, zorder=6, transform=ccrs.Geodetic())
 
 
     txt = ax.text(0.99, 0.01, dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom', bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
