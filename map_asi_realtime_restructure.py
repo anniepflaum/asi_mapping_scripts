@@ -48,8 +48,8 @@ def load_skymaps():
     # Load skymaps for all cameras
     skymaps = dict()
 
-#    lat, lon, az, el, mask = skymap.load_ARV()
-#    skymaps['ARV'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
+    lat, lon, az, el, mask = skymap.load_ARV()
+    skymaps['ARV'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
 
     lat, lon, az, el, mask = skymap.load_VEE()
     skymaps['VEE'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
@@ -411,10 +411,10 @@ def main():
 
     imgs = dict()
 
- #   # --- Download the latest ARV green channel image (already single-channel) ---
- #   url = 'https://optics.gi.alaska.edu/realtime/latest/arv_558_latest.jpg'
- #   im = retrieve_image(url)
- #   imgs['ARV'] = np.flipud(im).T
+    # --- Download the latest ARV green channel image (already single-channel) ---
+    url = 'https://optics.gi.alaska.edu/realtime/latest/arv_558_latest.jpg'
+    im = retrieve_image(url)
+    imgs['ARV'] = np.flipud(im)
 
 
     # --- Download the latest VEE green channel image (already single-channel) ---
