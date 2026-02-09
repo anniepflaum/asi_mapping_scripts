@@ -25,6 +25,7 @@ import numpy.ma as ma
 import h5py
 from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
 import requests
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import cartopy.crs as ccrs
@@ -36,6 +37,9 @@ import datetime as dt
 
 import check_intersect as ci
 import generate_skymap as skymap
+
+
+from resolvedvelocities.ResolveVectorsLat import ResolveVectorsLat
 
 
 
@@ -58,6 +62,17 @@ def load_skymaps():
         sm['lon'] = lon
 
     return skymaps
+
+
+
+# This function is needed due to an issue with cartopy where vectors are not scale/rotated
+#   correctly in some coordinate systems (see: https://github.com/SciTools/cartopy/issues/1179)
+def scale_uv(lon, lat, u, v):
+    us = u/np.cos(lat*np.pi/180.)
+    vs = v
+    sf = np.sqrt(u**2+v**2)/np.sqrt(us**2+vs**2)
+    return us*sf, vs*sf
+
 
 
 def retrieve_image(url):
@@ -235,17 +250,44 @@ def main():
    
     # --- Plot the PFISR data ---
     pfisr_file = 'pfisr_latest.h5'
+
+    # Calculate vvels
+    vvels = ResolveVectorsLat('vvels_config.ini')
+    vvels.transform()
+    #if vvels.binmlatdef:
+    vvels.bin_data_mlat()
+    #elif vvels.binvertdef:
+    #    vvels.bin_data_vert()
+    #else:
+    #    raise ValueError('Bins must be defined in the config file, either though BINMLATDEF or BINVERTDEF.')
+    vvels.compute_vector_velocity()
+    vvels.compute_electric_field()
+    vvels.compute_geodetic_output()
+
+    aidx = np.argmin(np.abs(vvels.outalt-110.))
+    vv = vvels.Velocity_gd[0,aidx,:,:]
+    vm = vvels.Vgd_mag[0,aidx,:]
+    vlat = vvels.bin_glat[aidx,:]
+    vlon = vvels.bin_glon[aidx,:]
+
+
     with h5py.File(pfisr_file, 'r') as h5:
         ne = h5['FittedParams/Ne'][:]
         glat = h5['Geomag/Latitude'][:]
         glon = h5['Geomag/Longitude'][:]
 
-    ax.scatter(glon, glat, c=ne, zorder=6, transform=ccrs.Geodetic())
+    c = ax.scatter(glon, glat, c=ne, zorder=6, cmap='jet', transform=ccrs.Geodetic())
+
+    u, v = scale_uv(vlon, vlat, vv[:,0], vv[:,1])
+    qp = ax.quiver(vlon, vlat, u, v, zorder=7, scale=5000, width=0.005, transform=ccrs.PlateCarree())
+    #qp = ax.quiver(vlon, vlat, u, v, vm, norm=mpl.colors.Normalize(vmin=0,vmax=1000), cmap='cubehelix', zorder=7, scale=5000, width=0.005, transform=ccrs.PlateCarree())
+
 
 
     txt = ax.text(0.99, 0.01, dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom', bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
 
     # --- Add colorbar and save the figure ---
+    ax.quiverkey(qp, 0.1, 0.9, 500., '500 m/s', transform=ax.transAxes)
     cbar = plt.colorbar(im_handle, ax=ax, orientation='vertical', pad=0.02, fraction=0.05)
     cbar.set_label('Green channel intensity (normalized)')
     plt.tight_layout()
