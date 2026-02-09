@@ -138,26 +138,26 @@ def load_BVR():
 
     dat = readsav('BVR_558_latest_az_el_512.sav', python_dict=True)
     print(dat.keys())
-    azmap = dat['az_latest_512_bvr'].copy()
-    elmap = dat['el_latest_512_bvr'].copy()
+    azmap = dat['az_latest_512'].copy()
+    elmap = dat['el_latest_512'].copy()
 
-    # Super hacky fix to interpolation across the az=0 line
-    # This is horrible code, do not repeat anywhere
-    ul = [47, 158]
-    lr = [248,290]
-    i0,j0 = ul
-    i1,j1 = lr
+    ## Super hacky fix to interpolation across the az=0 line
+    ## This is horrible code, do not repeat anywhere
+    #ul = [47, 158]
+    #lr = [248,290]
+    #i0,j0 = ul
+    #i1,j1 = lr
 
-    ivec = np.arange(i1-i0) + i0
-    m = (j1-j0)/(i1-i0)
-    jvec = m*(ivec-i0) + j0
-    jvec2 = jvec.astype(int)-3
-    jvec3 = jvec.astype(int)+3
+    #ivec = np.arange(i1-i0) + i0
+    #m = (j1-j0)/(i1-i0)
+    #jvec = m*(ivec-i0) + j0
+    #jvec2 = jvec.astype(int)-3
+    #jvec3 = jvec.astype(int)+3
 
-    for i in ivec:
-        fix_area = azmap[jvec2[i-i0]:jvec3[i-i0],i]
-        fix_area[(fix_area>5.) & (fix_area<355.)] = 0.
-        azmap[jvec2[i-i0]:jvec3[i-i0],i] = fix_area
+    #for i in ivec:
+    #    fix_area = azmap[jvec2[i-i0]:jvec3[i-i0],i]
+    #    fix_area[(fix_area>5.) & (fix_area<355.)] = 0.
+    #    azmap[jvec2[i-i0]:jvec3[i-i0],i] = fix_area
 
     #import matplotlib.pyplot as plt
     #plt.imshow(azmap)
@@ -172,8 +172,18 @@ def load_BVR():
 
 
 # Arctic Village
+def load_ARV():
+    site_lon, site_lat = [-145.533,  68.127]
+    
+    #dat = readsav('ARV_558_latest_az_el_512.sav', python_dict=True)
+    dat = readsav('BVR_558_latest_az_el_512.sav', python_dict=True)
+    print(dat.keys())
+    azmap = dat['az_latest_512'].copy()
+    elmap = dat['el_latest_512'].copy()
 
-site_lon, site_lat = [-145.533,  68.127]
+    mask = elmap<15.
+
+    return site_lat, site_lon, azmap, elmap, mask
 
 
 
