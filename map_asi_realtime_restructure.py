@@ -436,7 +436,7 @@ def main():
     #url = "https://optics.gi.alaska.edu/amisr_archive/PKR/DASC/jpg/2026/20260208/PKR_DASC_0558_20260208_110311.0000.JPEG"
     imgs['PKR'] = retrieve_image(url)
 
-    if True:
+    if False:
         plot_pretty(skymaps, imgs)
     else:
         plot_fast(skymaps, imgs)
