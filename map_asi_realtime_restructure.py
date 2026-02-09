@@ -134,6 +134,7 @@ def main():
 
     # --- Download the latest BVR green channel image (already single-channel) ---
     url = 'https://optics.gi.alaska.edu/realtime/latest/bvr_558_latest.jpg'
+    #url = 'https://optics.gi.alaska.edu/amisr_archive/BVR/GASI_5577/png/20260208/BVR_558_20260208_110302.png'
     #imgs['BVR'] = retrieve_image(url)
     im = retrieve_image(url)
     imgs['BVR'] = np.flipud(im)
@@ -141,13 +142,15 @@ def main():
 
     # --- Download the latest PKR green channel image (already single-channel) ---
     url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
+    #url = "https://optics.gi.alaska.edu/amisr_archive/PKR/DASC/jpg/2026/20260208/PKR_DASC_0558_20260208_110311.0000.JPEG"
     imgs['PKR'] = retrieve_image(url)
 
 
 
 
     # --- Set up the Cartopy map for plotting ---
-    proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
+    #proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
+    proj = ccrs.PlateCarree(central_longitude=-154)
     fig = plt.figure(figsize=(15, 10))
     gs = gridspec.GridSpec(4,4, width_ratios=[4,0.2,0.2,1])
     #ax = plt.axes(projection=proj)
