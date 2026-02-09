@@ -47,14 +47,14 @@ from resolvedvelocities.ResolveVectorsLat import ResolveVectorsLat
 def load_skymaps():
     # Load skymaps for all cameras
     skymaps = dict()
-    lat, lon, az, el, mask = skymap.load_PKR()
-    skymaps['PKR'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
-
     lat, lon, az, el, mask = skymap.load_VEE()
     skymaps['VEE'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
 
     lat, lon, az, el, mask = skymap.load_BVR()
     skymaps['BVR'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
+
+    lat, lon, az, el, mask = skymap.load_PKR()
+    skymaps['PKR'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
 
     for sm in skymaps.values():
         lat, lon = skymap.azel2geo(sm['site_lat'], sm['site_lon'], sm['azmt'], sm['elev'], alt=110.)
@@ -126,10 +126,6 @@ def main():
 
     imgs = dict()
 
-    # --- Download the latest PKR green channel image (already single-channel) ---
-    url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
-    imgs['PKR'] = retrieve_image(url)
-
     # --- Download the latest VEE green channel image (already single-channel) ---
     url = 'https://optics.gi.alaska.edu/realtime/latest/vee_558_latest.jpg'
     im = retrieve_image(url)
@@ -143,13 +139,17 @@ def main():
     imgs['BVR'] = np.flipud(im)
 
 
+    # --- Download the latest PKR green channel image (already single-channel) ---
+    url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
+    imgs['PKR'] = retrieve_image(url)
+
 
 
 
     # --- Set up the Cartopy map for plotting ---
     proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
     fig = plt.figure(figsize=(15, 10))
-    gs = gridspec.GridSpec(4,2, width_ratios=[4,1])
+    gs = gridspec.GridSpec(4,4, width_ratios=[4,0.2,0.2,1])
     #ax = plt.axes(projection=proj)
     ax = fig.add_subplot(gs[:,0], projection=proj)
     ax.set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
@@ -164,7 +164,7 @@ def main():
     # --- Setup sidebar plots ---
     ax1 = dict()
     for i, k in enumerate(imgs.keys()):
-        ax1[k] = fig.add_subplot(gs[i,1], projection=proj)
+        ax1[k] = fig.add_subplot(gs[i,-1], projection=proj)
         ax1[k].coastlines()
         ax1[k].gridlines()
         ax1[k].set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
@@ -190,7 +190,7 @@ def main():
         lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
         ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=7)
         ax.scatter(lonm1, latm1, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
-        ax.scatter(lona1, lata1, color='magenta', marker='x', transform=ccrs.PlateCarree(), zorder=8)
+        ax.scatter(lona1, lata1, color='magenta', marker='x', label='Apogee', transform=ccrs.PlateCarree(), zorder=8)
         ax.plot(lon2, lat2, color='red', transform=ccrs.PlateCarree(), zorder=7)
         ax.scatter(lonm2, latm2, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
         ax.scatter(lona2, lata2, color='magenta', marker='x', transform=ccrs.PlateCarree(), zorder=8)
@@ -251,6 +251,14 @@ def main():
     # --- Plot the PFISR data ---
     pfisr_file = 'pfisr_latest.h5'
 
+    with h5py.File(pfisr_file, 'r') as h5:
+       ne = h5['FittedParams/Ne'][:]
+       dne = h5['FittedParams/dNe'][:]
+       glat = h5['Geomag/Latitude'][:]
+       glon = h5['Geomag/Longitude'][:]
+
+    ne[dne>ne] = np.nan
+
     # Calculate vvels
     vvels = ResolveVectorsLat('vvels_config.ini')
     vvels.transform()
@@ -267,16 +275,14 @@ def main():
     aidx = np.argmin(np.abs(vvels.outalt-110.))
     vv = vvels.Velocity_gd[0,aidx,:,:]
     vm = vvels.Vgd_mag[0,aidx,:]
+    ve = vvels.Vgd_mag_err[0,aidx,:]
     vlat = vvels.bin_glat[aidx,:]
     vlon = vvels.bin_glon[aidx,:]
 
+    vv[ve>vm,:] = [np.nan, np.nan, np.nan]
+    vm[ve>vm] = np.nan
 
-    with h5py.File(pfisr_file, 'r') as h5:
-        ne = h5['FittedParams/Ne'][:]
-        glat = h5['Geomag/Latitude'][:]
-        glon = h5['Geomag/Longitude'][:]
-
-    c = ax.scatter(glon, glat, c=ne, zorder=6, cmap='jet', transform=ccrs.Geodetic())
+    pfisr_handle = ax.scatter(glon, glat, c=ne, zorder=6, cmap='jet', transform=ccrs.Geodetic())
 
     u, v = scale_uv(vlon, vlat, vv[:,0], vv[:,1])
     qp = ax.quiver(vlon, vlat, u, v, zorder=7, scale=5000, width=0.005, transform=ccrs.PlateCarree())
@@ -288,8 +294,12 @@ def main():
 
     # --- Add colorbar and save the figure ---
     ax.quiverkey(qp, 0.1, 0.9, 500., '500 m/s', transform=ax.transAxes)
-    cbar = plt.colorbar(im_handle, ax=ax, orientation='vertical', pad=0.02, fraction=0.05)
+    cax = fig.add_subplot(gs[:,1])
+    cbar = fig.colorbar(im_handle, cax=cax, orientation='vertical')
     cbar.set_label('Green channel intensity (normalized)')
+    cax = fig.add_subplot(gs[:,2])
+    cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
+    cbar.set_label(r'Electron Density (m$^{-3}$)')
     plt.tight_layout()
     output_path = "PKR_realtime.png"
     plt.savefig(output_path, dpi=150)
