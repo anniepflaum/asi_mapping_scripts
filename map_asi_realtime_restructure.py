@@ -56,8 +56,8 @@ def load_skymaps():
     lat, lon, az, el, mask = skymap.load_VEE()
     skymaps['VEE'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
 
-    lat, lon, az, el, mask = skymap.load_BVR()
-    skymaps['BVR'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
+    #lat, lon, az, el, mask = skymap.load_BVR()
+    #skymaps['BVR'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
 
     lat, lon, az, el, mask = skymap.load_PKR()
     skymaps['PKR'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
@@ -99,7 +99,7 @@ def load_traj(filename):
     times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
     
     # Map to 110 km along field lines
-    lats, lons, _ = apex.map_to_height(lats, lons, alts/1000., 110.)
+    lats, lons, _ = apex.map_to_height(lats, lons, alts, 110.)
 
     # Rocket trajectories every minute
     idx = np.argwhere(times % 60 == 0)
@@ -221,10 +221,10 @@ def plot_fast(skymaps, imgs, pfisr):
 
     ax.plot(lon1, lat1, color='red', label='GNEISS trajectory',zorder=7)
     ax.scatter(lonm1, latm1, color='red', s=15, zorder=7)
-    ax.scatter(lona1, lata1, color='magenta', marker='x', zorder=7)
+    ax.scatter(lona1, lata1, color='lavenderblush', label='Apogee', marker='x', zorder=7)
     ax.plot(lon2, lat2, color='red', zorder=7)
     ax.scatter(lonm2, latm2, color='red', s=15, zorder=7)
-    ax.scatter(lona2, lata2, color='magenta', marker='x', zorder=7)
+    ax.scatter(lona2, lata2, color='lavenderblush', marker='x', zorder=7)
 
 
 
@@ -328,10 +328,10 @@ def plot_pretty(skymaps, imgs, pfisr):
 
     ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=7)
     ax.scatter(lonm1, latm1, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
-    ax.scatter(lona1, lata1, color='magenta', marker='x', label='Apogee', transform=ccrs.PlateCarree(), zorder=8)
+    ax.scatter(lona1, lata1, color='lavenderblush', marker='x', label='Apogee', transform=ccrs.PlateCarree(), zorder=8)
     ax.plot(lon2, lat2, color='red', transform=ccrs.PlateCarree(), zorder=7)
     ax.scatter(lonm2, latm2, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
-    ax.scatter(lona2, lata2, color='magenta', marker='x', transform=ccrs.PlateCarree(), zorder=8)
+    ax.scatter(lona2, lata2, color='lavenderblush', marker='x', transform=ccrs.PlateCarree(), zorder=8)
 
 
 
@@ -400,10 +400,10 @@ def main():
     imgs['VEE'] = np.flipud(im)
 
 
-    # --- Download the latest BVR green channel image (already single-channel) ---
-    url = 'https://optics.gi.alaska.edu/realtime/latest/bvr_558_latest.jpg'
-    im = retrieve_image(url)
-    imgs['BVR'] = np.flipud(im)
+    ## --- Download the latest BVR green channel image (already single-channel) ---
+    #url = 'https://optics.gi.alaska.edu/realtime/latest/bvr_558_latest.jpg'
+    #im = retrieve_image(url)
+    #imgs['BVR'] = np.flipud(im)
 
 
     # --- Download the latest PKR green channel image (already single-channel) ---
