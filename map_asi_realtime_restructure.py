@@ -209,7 +209,7 @@ def plot_fast(skymaps, imgs, pfisr):
 
     # --- Overlay PFISR ---
     print('PFISR')
-    pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet')
+    pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet', vmin=0, vmax=4e11)
     u, v = scale_uv(pfisr['vlon'], pfisr['vlat'], pfisr['vel'][:,0], pfisr['vel'][:,1])
     qp = ax.quiver(pfisr['vlon'], pfisr['vlat'], u, v, zorder=7, scale=5000, width=0.005)
 
@@ -232,14 +232,14 @@ def plot_fast(skymaps, imgs, pfisr):
 
     # Final output plot
     txt = ax.text(0.99, 0.01, dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom', bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
-    ax.set_title("PKR ASI latest green channel mapped to geographic lat/lon")
+    ax.set_title("GNEISS Ground Sites (magnetic footpointing to 110 km)")
     ax.legend(loc='upper right')
 
     # --- Add colorbar and save the figure ---
     ax.quiverkey(qp, 0.1, 0.9, 500., '500 m/s', transform=ax.transAxes)
     cax = fig.add_subplot(gs[:,1])
     cbar = fig.colorbar(im_handle, cax=cax, orientation='vertical')
-    cbar.set_label('Green channel intensity (normalized)')
+    cbar.set_label('Green Channel Intensity')
     cax = fig.add_subplot(gs[:,2])
     cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
     cbar.set_label(r'Electron Density (m$^{-3}$)')
@@ -316,7 +316,7 @@ def plot_pretty(skymaps, imgs, pfisr):
     # --- Overlay PFISR ---
     print('PFISR')
     pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet', transform=ccrs.Geodetic())
-    u, v = scale_uv(pfisr['vlon'], pfisr['vlat'], pfisr['vel'][:,0], pfisr['vel'][:,1])
+    u, v = scale_uv(pfisr['vlon'], pfisr['vlat'], pfisr['vel'][:,0], pfisr['vel'][:,1], vmin=0, vmax=4e11)
     qp = ax.quiver(pfisr['vlon'], pfisr['vlat'], u, v, zorder=7, scale=5000, width=0.005, transform=ccrs.PlateCarree())
 
 
@@ -336,7 +336,7 @@ def plot_pretty(skymaps, imgs, pfisr):
 
 
     # Final plotting
-    ax.set_title("PKR ASI latest green channel mapped to geographic lat/lon")
+    ax.set_title("GNEISS Ground Sites (magnetic footpointing to 110 km)")
     txt = ax.text(0.99, 0.01, dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom', bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
     ax.legend(loc='upper right')
 
@@ -344,7 +344,7 @@ def plot_pretty(skymaps, imgs, pfisr):
     ax.quiverkey(qp, 0.1, 0.9, 500., '500 m/s', transform=ax.transAxes)
     cax = fig.add_subplot(gs[:,1])
     cbar = fig.colorbar(im_handle, cax=cax, orientation='vertical')
-    cbar.set_label('Green channel intensity (normalized)')
+    cbar.set_label('Green Channel Intensity')
     cax = fig.add_subplot(gs[:,2])
     cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
     cbar.set_label(r'Electron Density (m$^{-3}$)')
