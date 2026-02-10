@@ -241,7 +241,7 @@ def plot_fast(skymaps, imgs, pfisr):
     plt.tight_layout()
 
 
-    output_path = "PKR_realtime.png"
+    output_path = f"../launch_science_fast/GNEISS_launch_science_fast_{dt.datetime.utcnow():%Y%m%dT%H%M%S}.png"
     plt.savefig(output_path, dpi=150)
     print(f"Saved mapped image to {output_path}")
     #plt.show()
@@ -342,7 +342,9 @@ def plot_pretty(skymaps, imgs, pfisr):
     cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
     cbar.set_label(r'Electron Density (m$^{-3}$)')
     plt.tight_layout()
-    output_path = "PKR_realtime.png"
+
+
+    output_path = f"../launch_science_pretty/GNEISS_launch_science_pretty_{dt.datetime.utcnow():%Y%m%dT%H%M%S}.png"
     plt.savefig(output_path, dpi=150)
     print(f"Saved mapped image to {output_path}")
     #plt.show()

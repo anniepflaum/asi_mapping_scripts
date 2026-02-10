@@ -34,8 +34,6 @@ import h5py
 
 def azel2geo(site_lat, site_lon, az, el, alt=110.):
 
-    #print(az[az>0.], el[el>0.])
-
     # lat/lon array
     x, y, z = pm.geodetic2ecef(site_lat, site_lon, 0.)
     e, n, u = pm.aer2enu(az, el, 1.)
@@ -137,7 +135,6 @@ def load_BVR():
     site_lon, site_lat = [-147.4,    66.36]
 
     dat = readsav('BVR_558_latest_az_el_512.sav', python_dict=True)
-    print(dat.keys())
     azmap = dat['az_latest_512'].copy()
     elmap = dat['el_latest_512'].copy()
 
