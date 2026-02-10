@@ -173,8 +173,6 @@ def load_ARV():
     site_lon, site_lat = [-145.533,  68.127]
     
     dat = readsav('ARV_558_latest_az_el_512.sav', python_dict=True)
-    #dat = readsav('BVR_558_latest_az_el_512.sav', python_dict=True)
-    print(dat.keys())
     azmap = dat['az_latest_512'].copy()
     elmap = dat['el_latest_512'].copy()
 

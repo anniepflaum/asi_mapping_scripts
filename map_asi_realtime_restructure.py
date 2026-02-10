@@ -30,6 +30,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from apexpy import Apex
 import magcoordmap as mcm  # Leslie Lamarche's custom module for magnetic grid lines
 from PIL import Image
 from io import BytesIO
@@ -42,6 +43,7 @@ import generate_skymap as skymap
 from resolvedvelocities.ResolveVectorsLat import ResolveVectorsLat
 
 
+apex = Apex()
 
 ## Load the latitude and longitude mapping arrays from the skymap.mat file for a given altitude
 def load_skymaps():
@@ -95,6 +97,10 @@ def retrieve_image(url):
 def load_traj(filename):
     # Load latitude and longitude columns from a trajectory text file
     times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
+    
+    # Map to 110 km along field lines
+    lats, lons, _ = apex.map_to_height(lats, lons, alts/1000., 110.)
+
     # Rocket trajectories every minute
     idx = np.argwhere(times % 60 == 0)
     timem = times[idx].squeeze()
@@ -125,21 +131,20 @@ def retrieve_pfisr():
        dne = h5['FittedParams/dNe'][:]
        glat = h5['Geomag/Latitude'][:]
        glon = h5['Geomag/Longitude'][:]
+       galt = h5['Geomag/Altitude'][:]
 
     ne[dne>ne] = np.nan
 
     # Calculate vvels
     vvels = ResolveVectorsLat('vvels_config.ini')
     vvels.transform()
-    #if vvels.binmlatdef:
     vvels.bin_data_mlat()
-    #elif vvels.binvertdef:
-    #    vvels.bin_data_vert()
-    #else:
-    #    raise ValueError('Bins must be defined in the config file, either though BINMLATDEF or BINVERTDEF.')
     vvels.compute_vector_velocity()
     vvels.compute_electric_field()
     vvels.compute_geodetic_output()
+
+    # Map to 110 km along field lines
+    glat, glon, _ = apex.map_to_height(glat, glon, galt/1000., 110.)
 
     aidx = np.argmin(np.abs(vvels.outalt-110.))
     vv = vvels.Velocity_gd[0,aidx,:,:]
@@ -264,7 +269,7 @@ def plot_pretty(skymaps, imgs, pfisr):
     ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.8, zorder=2)
     ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.5, zorder=2)
     ax.gridlines()
-    mgl = mcm.maggridlines(ax)
+    mgl = mcm.maggridlines(ax, apex=apex, apex_height=110.)
 
     # --- Setup sidebar plots ---
     ax1 = dict()
@@ -272,7 +277,7 @@ def plot_pretty(skymaps, imgs, pfisr):
         ax1[site] = fig.add_subplot(gs[i,-1], projection=proj)
         ax1[site].coastlines()
         ax1[site].gridlines()
-        mcm.maggridlines(ax1[site])
+        mcm.maggridlines(ax1[site], apex=apex, apex_height=110.)
         ax1[site].set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
         ax1[site].set_title(site)
 
@@ -309,6 +314,7 @@ def plot_pretty(skymaps, imgs, pfisr):
 
 
     # --- Overlay PFISR ---
+    print('PFISR')
     pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet', transform=ccrs.Geodetic())
     u, v = scale_uv(pfisr['vlon'], pfisr['vlat'], pfisr['vel'][:,0], pfisr['vel'][:,1])
     qp = ax.quiver(pfisr['vlon'], pfisr['vlat'], u, v, zorder=7, scale=5000, width=0.005, transform=ccrs.PlateCarree())
@@ -316,6 +322,7 @@ def plot_pretty(skymaps, imgs, pfisr):
 
 
     # --- Overlay rocket trajectories from text files ---
+    print('Trajectory')
     lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
     lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
 
