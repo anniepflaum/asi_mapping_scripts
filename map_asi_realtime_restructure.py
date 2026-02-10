@@ -56,8 +56,8 @@ def load_skymaps():
     lat, lon, az, el, mask = skymap.load_VEE()
     skymaps['VEE'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
 
-    #lat, lon, az, el, mask = skymap.load_BVR()
-    #skymaps['BVR'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
+    lat, lon, az, el, mask = skymap.load_BVR()
+    skymaps['BVR'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
 
     lat, lon, az, el, mask = skymap.load_PKR()
     skymaps['PKR'] = {'site_lat':lat, 'site_lon':lon, 'azmt':az, 'elev':el, 'mask':mask}
@@ -158,7 +158,6 @@ def retrieve_pfisr():
 
     pfisr_data = {'ne':ne, 'glat':glat, 'glon':glon, 'vel':vv, 'mag':vm, 'vlat':vlat, 'vlon':vlon}
 
-    #return ne, glat, glon, vv, vm, vlat, vlon
     return pfisr_data
 
 
@@ -400,10 +399,10 @@ def main():
     imgs['VEE'] = np.flipud(im)
 
 
-    ## --- Download the latest BVR green channel image (already single-channel) ---
-    #url = 'https://optics.gi.alaska.edu/realtime/latest/bvr_558_latest.jpg'
-    #im = retrieve_image(url)
-    #imgs['BVR'] = np.flipud(im)
+    # --- Download the latest BVR green channel image (already single-channel) ---
+    url = 'https://optics.gi.alaska.edu/realtime/latest/bvr_558_latest.jpg'
+    im = retrieve_image(url)
+    imgs['BVR'] = np.flipud(im)
 
 
     # --- Download the latest PKR green channel image (already single-channel) ---
