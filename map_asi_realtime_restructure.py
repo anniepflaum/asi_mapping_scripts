@@ -93,10 +93,48 @@ def retrieve_image(url):
         img = img[:, :, 0]
     return img.astype(np.float32)
 
+
+def load_imagery():
+
+    imgs = dict()
+
+    # --- Download the latest ARV green channel image (already single-channel) ---
+    url = 'https://optics.gi.alaska.edu/realtime/latest/arv_558_latest.jpg'
+    im = retrieve_image(url)
+    imgs['ARV'] = np.flipud(im)
+
+
+    # --- Download the latest VEE green channel image (already single-channel) ---
+    url = 'https://optics.gi.alaska.edu/realtime/latest/vee_558_latest.jpg'
+    im = retrieve_image(url)
+    imgs['VEE'] = np.flipud(im)
+
+
+    # --- Download the latest BVR green channel image (already single-channel) ---
+    url = 'https://optics.gi.alaska.edu/realtime/latest/bvr_558_latest.jpg'
+    im = retrieve_image(url)
+    imgs['BVR'] = np.flipud(im)
+
+
+    # --- Download the latest PKR green channel image (already single-channel) ---
+    url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
+    imgs['PKR'] = retrieve_image(url)
+
+    return imgs
+
+
+
+
+
 # --- Overlay rocket trajectories from text files (if available) ---
-def load_traj(filename):
+def load_traj(filename, offset=0.):
+    
+    #    lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
+    #    lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
+
     # Load latitude and longitude columns from a trajectory text file
     times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
+    times -= offset
 
 #    # TRUE
 #    true_lata, true_lona = [67.009, -147.317]
@@ -115,6 +153,18 @@ def load_traj(filename):
     lona = lons[aidx]       # lon of appogee
 
     return lats, lons, latsm, lonsm, lata, lona
+
+def load_trajectory():
+
+    traj = dict()
+    lat, lon, latm, lonm, lata, lona = load_traj('Traj_Left.txt')
+    traj['Left'] = {'coords':[lat,lon], 'min':[latm,lonm], 'app':[lata,lona]}
+
+    lat, lon, latm, lonm, lata, lona = load_traj('Traj_Right.txt', offset=30.)
+    traj['Right'] = {'coords':[lat,lon], 'min':[latm,lonm], 'app':[lata,lona]}
+
+    return traj
+
 
 
 def retrieve_pfisr():
@@ -168,7 +218,7 @@ def retrieve_pfisr():
 
 ####### PLOTTING############
 
-def generate_map(skymaps, imgs, pfisr, fast=False):
+def generate_map(skymaps, imgs, pfisr, traj, fast=False):
 
 
     # Plot setup
@@ -251,15 +301,19 @@ def generate_map(skymaps, imgs, pfisr, fast=False):
 
     # --- Overlay rocket trajectories from text files ---
     print('Trajectories')
-    lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
-    lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
+    
+    #lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
+    #lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
 
-    ax.plot(lon1, lat1, color='red', label='GNEISS trajectory',zorder=7, transform=axtrans)
-    ax.scatter(lonm1, latm1, color='red', s=15, zorder=7, transform=axtrans)
-    ax.scatter(lona1, lata1, color='lavenderblush', label='Apogee', marker='x', zorder=7, transform=axtrans)
-    ax.plot(lon2, lat2, color='red', zorder=7, transform=axtrans)
-    ax.scatter(lonm2, latm2, color='red', s=15, zorder=7, transform=axtrans)
-    ax.scatter(lona2, lata2, color='lavenderblush', marker='x', zorder=7, transform=axtrans)
+    #ax.plot(lon1, lat1, color='red', label='GNEISS trajectory',zorder=7, transform=axtrans)
+    for t in traj.values():
+        ax.plot(t['coords'][1], t['coords'][0], color='red', label='GNEISS trajectory',zorder=7, transform=axtrans)
+        ax.scatter(t['min'][1], t['min'][0], color='red', s=15, zorder=7, transform=axtrans)
+        ax.scatter(t['app'][1], t['app'][0], color='lavenderblush', label='Apogee', marker='x', zorder=7, transform=axtrans)
+
+    #ax.plot(lon2, lat2, color='red', zorder=7, transform=axtrans)
+    #ax.scatter(lonm2, latm2, color='red', s=15, zorder=7, transform=axtrans)
+    #ax.scatter(lona2, lata2, color='lavenderblush', marker='x', zorder=7, transform=axtrans)
 
 
     # TRUE
@@ -331,34 +385,40 @@ def main():
             skymaps[s0]['extra_masks'][s1] = m0
 
 
-    imgs = dict()
+#    imgs = dict()
+#
+#    # --- Download the latest ARV green channel image (already single-channel) ---
+#    url = 'https://optics.gi.alaska.edu/realtime/latest/arv_558_latest.jpg'
+#    im = retrieve_image(url)
+#    imgs['ARV'] = np.flipud(im)
+#
+#
+#    # --- Download the latest VEE green channel image (already single-channel) ---
+#    url = 'https://optics.gi.alaska.edu/realtime/latest/vee_558_latest.jpg'
+#    im = retrieve_image(url)
+#    imgs['VEE'] = np.flipud(im)
+#
+#
+#    # --- Download the latest BVR green channel image (already single-channel) ---
+#    url = 'https://optics.gi.alaska.edu/realtime/latest/bvr_558_latest.jpg'
+#    im = retrieve_image(url)
+#    imgs['BVR'] = np.flipud(im)
+#
+#
+#    # --- Download the latest PKR green channel image (already single-channel) ---
+#    url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
+#    imgs['PKR'] = retrieve_image(url)
 
-    # --- Download the latest ARV green channel image (already single-channel) ---
-    url = 'https://optics.gi.alaska.edu/realtime/latest/arv_558_latest.jpg'
-    im = retrieve_image(url)
-    imgs['ARV'] = np.flipud(im)
 
 
-    # --- Download the latest VEE green channel image (already single-channel) ---
-    url = 'https://optics.gi.alaska.edu/realtime/latest/vee_558_latest.jpg'
-    im = retrieve_image(url)
-    imgs['VEE'] = np.flipud(im)
-
-
-    # --- Download the latest BVR green channel image (already single-channel) ---
-    url = 'https://optics.gi.alaska.edu/realtime/latest/bvr_558_latest.jpg'
-    im = retrieve_image(url)
-    imgs['BVR'] = np.flipud(im)
-
-
-    # --- Download the latest PKR green channel image (already single-channel) ---
-    url = "https://optics.gi.alaska.edu/realtime/latest/pkr_latest_green.jpg"
-    imgs['PKR'] = retrieve_image(url)
+    imgs = load_imagery()
 
 
     pfisr = retrieve_pfisr()
 
-    generate_map(skymaps, imgs, pfisr, fast=args.fast)
+    traj = load_trajectory()
+
+    generate_map(skymaps, imgs, pfisr, traj, fast=args.fast)
 
 
     tocall=time.time()
