@@ -97,6 +97,10 @@ def retrieve_image(url):
 def load_traj(filename):
     # Load latitude and longitude columns from a trajectory text file
     times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
+
+#    # TRUE
+#    true_lata, true_lona = [67.009, -147.317]
+#    true_lata, true_lona = [66.971, -146.049]
     
     # Map to 110 km along field lines
     lats, lons, _ = apex.map_to_height(lats, lons, alts, 110.)
@@ -164,32 +168,63 @@ def retrieve_pfisr():
 
 ####### PLOTTING############
 
+def generate_map(skymaps, imgs, pfisr, fast=False):
 
-def plot_fast(skymaps, imgs, pfisr):
-
-    coastlons = np.loadtxt('coastlon.txt')
-    coastlats = np.loadtxt('coastlat.txt')
 
     # Plot setup
     fig = plt.figure(figsize=(15, 10))
     gs = gridspec.GridSpec(4,4, width_ratios=[4,0.2,0.2,1])
-    ax = fig.add_subplot(gs[:,0])
-    ax.plot(coastlons,coastlats, color='black')#,s=15) 
-    ax.set_ylim(ymin=57.5, ymax=72)
-    ax.set_xlim(xmin=-170, xmax=-135)
-    ax.set_aspect(2.2)
-    ax.grid()
+
+    if fast:
+
+        ax = fig.add_subplot(gs[:,0])
+        coastlons = np.loadtxt('coastlon.txt')
+        coastlats = np.loadtxt('coastlat.txt')
+    
+        ax.plot(coastlons,coastlats, color='black')#,s=15) 
+        ax.set_ylim(ymin=57.5, ymax=72)
+        ax.set_xlim(xmin=-170, xmax=-135)
+        ax.set_aspect(2.2)
+        ax.grid()
+        axtrans = ax.transData
+    else:
+        proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
+        ax = fig.add_subplot(gs[:,0], projection=proj)
+        # fast setup
+        ax.add_feature(cfeature.LAND.with_scale("50m"), zorder=0)
+        ax.add_feature(cfeature.OCEAN.with_scale("50m"), zorder=0)
+        ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.8, zorder=2)
+        ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.5, zorder=2)
+        ax.set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
+        ax.gridlines()
+        mgl = mcm.maggridlines(ax, apex=apex, apex_height=110.)
+        axtrans = ccrs.PlateCarree()
+
+
     # --- Setup sidebar plots ---
     ax1 = dict()
+    axtrans1 = dict()
     for i, site in enumerate(imgs.keys()):
-        # FAST
-        ax1[site] = fig.add_subplot(gs[i,-1])
-        ax1[site].plot(coastlons,coastlats, color='black')#,s=15) 
-        ax1[site].set_ylim(ymin=57.5, ymax=72)
-        ax1[site].set_xlim(xmin=-170, xmax=-135)
-        ax1[site].set_aspect(2.2)
-        ax1[site].grid()
-        ax1[site].set_title(site)
+        if fast:
+            # FAST
+            ax1[site] = fig.add_subplot(gs[i,-1])
+            ax1[site].plot(coastlons,coastlats, color='black')#,s=15) 
+            ax1[site].set_ylim(ymin=57.5, ymax=72)
+            ax1[site].set_xlim(xmin=-170, xmax=-135)
+            ax1[site].set_aspect(2.2)
+            ax1[site].grid()
+            ax1[site].set_title(site)
+            axtrans1[site] = ax1[site].transData
+        else:
+            ax1[site] = fig.add_subplot(gs[i,-1], projection=proj)
+            ax1[site].add_feature(cfeature.LAND.with_scale("50m"), zorder=0)
+            ax1[site].add_feature(cfeature.OCEAN.with_scale("50m"), zorder=0)
+            ax1[site].add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.8, zorder=2)
+            ax1[site].add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.5, zorder=2)
+            ax1[site].set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
+            ax1[site].gridlines()
+            mgl = mcm.maggridlines(ax, apex=apex, apex_height=110.)
+            axtrans1[site] = ccrs.PlateCarree()
 
 
 
@@ -202,15 +237,16 @@ def plot_fast(skymaps, imgs, pfisr):
         for m in skymaps[site]['extra_masks'].values():
             im[m] = np.nan
         # Partial FoV for main plots
-        im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], im)
+        im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], im, vmin=0, transform=axtrans)
+        #im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], im, vmin=0)
         # Full FoV for sidebar plots
-        ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img)
+        ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img, vmin=0, transform=axtrans1[site])
 
     # --- Overlay PFISR ---
     print('PFISR')
-    pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet', vmin=0, vmax=4e11)
+    pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet', vmin=0, vmax=4e11, transform=axtrans)
     u, v = scale_uv(pfisr['vlon'], pfisr['vlat'], pfisr['vel'][:,0], pfisr['vel'][:,1])
-    qp = ax.quiver(pfisr['vlon'], pfisr['vlat'], u, v, zorder=7, scale=5000, width=0.005)
+    qp = ax.quiver(pfisr['vlon'], pfisr['vlat'], u, v, zorder=7, scale=5000, width=0.005, transform=axtrans)
 
 
     # --- Overlay rocket trajectories from text files ---
@@ -218,12 +254,23 @@ def plot_fast(skymaps, imgs, pfisr):
     lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
     lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
 
-    ax.plot(lon1, lat1, color='red', label='GNEISS trajectory',zorder=7)
-    ax.scatter(lonm1, latm1, color='red', s=15, zorder=7)
-    ax.scatter(lona1, lata1, color='lavenderblush', label='Apogee', marker='x', zorder=7)
-    ax.plot(lon2, lat2, color='red', zorder=7)
-    ax.scatter(lonm2, latm2, color='red', s=15, zorder=7)
-    ax.scatter(lona2, lata2, color='lavenderblush', marker='x', zorder=7)
+    ax.plot(lon1, lat1, color='red', label='GNEISS trajectory',zorder=7, transform=axtrans)
+    ax.scatter(lonm1, latm1, color='red', s=15, zorder=7, transform=axtrans)
+    ax.scatter(lona1, lata1, color='lavenderblush', label='Apogee', marker='x', zorder=7, transform=axtrans)
+    ax.plot(lon2, lat2, color='red', zorder=7, transform=axtrans)
+    ax.scatter(lonm2, latm2, color='red', s=15, zorder=7, transform=axtrans)
+    ax.scatter(lona2, lata2, color='lavenderblush', marker='x', zorder=7, transform=axtrans)
+
+
+    # TRUE
+    true_apogee = [[67.009, -147.317, 319.], [66.971, -146.049, 327.]]
+    for tc in true_apogee:
+        true_lata, true_lona, true_alta = tc
+    
+        # Map to 110 km along field lines
+        true_lat, true_lon, _ = apex.map_to_height(true_lata, true_lona, true_alta, 110.)
+
+        ax.scatter(true_lon, true_lat, color='lightcyan', transform=axtrans)
 
 
 
@@ -245,115 +292,14 @@ def plot_fast(skymaps, imgs, pfisr):
     plt.tight_layout()
 
 
-    output_path = f"../launch_science_fast/GNEISS_launch_science_fast_{dt.datetime.utcnow():%Y%m%dT%H%M%S}.png"
+    #output_path = f"../launch_science_fast/GNEISS_launch_science_fast_{dt.datetime.utcnow():%Y%m%dT%H%M%S}.png"
+    output_path = f"GNEISS_launch_science.png"
     plt.savefig(output_path, dpi=150)
     print(f"Saved mapped image to {output_path}")
     #plt.show()
 
 
 
-
-
-def plot_pretty(skymaps, imgs, pfisr):
-
-    # --- Set up the Cartopy map for plotting ---
-    proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
-    #proj = ccrs.PlateCarree(central_longitude=-154)
-    fig = plt.figure(figsize=(15, 10))
-    gs = gridspec.GridSpec(4,4, width_ratios=[4,0.2,0.2,1])
-    ax = fig.add_subplot(gs[:,0], projection=proj)
-    ax.set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
-    ax.add_feature(cfeature.LAND.with_scale("50m"), zorder=0)
-    ax.add_feature(cfeature.OCEAN.with_scale("50m"), zorder=0)
-    ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.8, zorder=2)
-    ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.5, zorder=2)
-    ax.gridlines()
-    mgl = mcm.maggridlines(ax, apex=apex, apex_height=110.)
-
-    # --- Setup sidebar plots ---
-    ax1 = dict()
-    for i, site in enumerate(imgs.keys()):
-        ax1[site] = fig.add_subplot(gs[i,-1], projection=proj)
-        ax1[site].coastlines()
-        ax1[site].gridlines()
-        mcm.maggridlines(ax1[site], apex=apex, apex_height=110.)
-        ax1[site].set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
-        ax1[site].set_title(site)
-
-
-
-    for site, img in imgs.items():
-        print(site)
-
-        # apply mask
-        img[skymaps[site]['mask']] = np.nan
-
-        im = img.copy()
-        lat = skymaps[site]['lat'].copy()
-        lon = skymaps[site]['lon'].copy()
-        for m in skymaps[site]['extra_masks'].values():
-            im[m] = np.nan
-
-        ############################
-        # THIS WORKS BUT SLOW
-        img_flat = img[~skymaps[site]['mask']].flatten()
-        lon_flat = skymaps[site]['lon'][~skymaps[site]['mask']].flatten()
-        lat_flat = skymaps[site]['lat'][~skymaps[site]['mask']].flatten()
-
-        im_handle = ax1[site].tripcolor(lon_flat, lat_flat, img_flat, zorder=3, transform=ccrs.PlateCarree())
-
-        imf = im[np.isfinite(im)].flatten()
-        latf = lat[np.isfinite(im)].flatten()
-        lonf = lon[np.isfinite(im)].flatten()
-
-        ax.tripcolor(lonf, latf, imf, transform=ccrs.PlateCarree())
-        #############################
-
-
-
-
-    # --- Overlay PFISR ---
-    print('PFISR')
-    pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet', transform=ccrs.Geodetic())
-    u, v = scale_uv(pfisr['vlon'], pfisr['vlat'], pfisr['vel'][:,0], pfisr['vel'][:,1], vmin=0, vmax=4e11)
-    qp = ax.quiver(pfisr['vlon'], pfisr['vlat'], u, v, zorder=7, scale=5000, width=0.005, transform=ccrs.PlateCarree())
-
-
-
-    # --- Overlay rocket trajectories from text files ---
-    print('Trajectory')
-    lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
-    lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
-
-    ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=7)
-    ax.scatter(lonm1, latm1, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
-    ax.scatter(lona1, lata1, color='lavenderblush', marker='x', label='Apogee', transform=ccrs.PlateCarree(), zorder=8)
-    ax.plot(lon2, lat2, color='red', transform=ccrs.PlateCarree(), zorder=7)
-    ax.scatter(lonm2, latm2, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
-    ax.scatter(lona2, lata2, color='lavenderblush', marker='x', transform=ccrs.PlateCarree(), zorder=8)
-
-
-
-    # Final plotting
-    ax.set_title("GNEISS Ground Sites (magnetic footpointing to 110 km)")
-    txt = ax.text(0.99, 0.01, dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom', bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
-    ax.legend(loc='upper right')
-
-    # --- Add colorbar and save the figure ---
-    ax.quiverkey(qp, 0.1, 0.9, 500., '500 m/s', transform=ax.transAxes)
-    cax = fig.add_subplot(gs[:,1])
-    cbar = fig.colorbar(im_handle, cax=cax, orientation='vertical')
-    cbar.set_label('Green Channel Intensity')
-    cax = fig.add_subplot(gs[:,2])
-    cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
-    cbar.set_label(r'Electron Density (m$^{-3}$)')
-    plt.tight_layout()
-
-
-    output_path = f"../launch_science_pretty/GNEISS_launch_science_pretty_{dt.datetime.utcnow():%Y%m%dT%H%M%S}.png"
-    plt.savefig(output_path, dpi=150)
-    print(f"Saved mapped image to {output_path}")
-    #plt.show()
 
 
 
@@ -364,7 +310,7 @@ def main():
 
     # --- Parse command-line arguments ---
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pretty", action='store_true')
+    ap.add_argument("--fast", action='store_true')
     args = ap.parse_args()
 
 
@@ -412,10 +358,7 @@ def main():
 
     pfisr = retrieve_pfisr()
 
-    if args.pretty:
-        plot_pretty(skymaps, imgs, pfisr)
-    else:
-        plot_fast(skymaps, imgs, pfisr)
+    generate_map(skymaps, imgs, pfisr, fast=args.fast)
 
 
     tocall=time.time()
