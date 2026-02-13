@@ -127,41 +127,91 @@ def load_imagery():
 
 
 # --- Overlay rocket trajectories from text files (if available) ---
-def load_traj(filename, offset=0.):
-    
-    #    lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
-    #    lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
-
-    # Load latitude and longitude columns from a trajectory text file
-    times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
-    times -= offset
-
-#    # TRUE
-#    true_lata, true_lona = [67.009, -147.317]
-#    true_lata, true_lona = [66.971, -146.049]
-    
-    # Map to 110 km along field lines
-    lats, lons, _ = apex.map_to_height(lats, lons, alts, 110.)
-
-    # Rocket trajectories every minute
-    idx = np.argwhere(times % 60 == 0)
-    timem = times[idx].squeeze()
-    latsm = lats[idx].squeeze()     # lat every minute
-    lonsm = lons[idx].squeeze()     # lon every minute
-    aidx = np.argmax(alts)
-    lata = lats[aidx]       # lat of appogee
-    lona = lons[aidx]       # lon of appogee
-
-    return lats, lons, latsm, lonsm, lata, lona
+#def load_traj(filename, offset=0.):
+#    
+#    #    lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
+#    #    lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
+#
+#    # Load latitude and longitude columns from a trajectory text file
+#    times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
+#    times -= offset
+#
+##    # TRUE
+##    true_lata, true_lona = [67.009, -147.317]
+##    true_lata, true_lona = [66.971, -146.049]
+#    
+#    # Map to 110 km along field lines
+#    lats, lons, _ = apex.map_to_height(lats, lons, alts, 110.)
+#
+#    # Rocket trajectories every minute
+#    idx = np.argwhere(times % 60 == 0)
+#    timem = times[idx].squeeze()
+#    latsm = lats[idx].squeeze()     # lat every minute
+#    lonsm = lons[idx].squeeze()     # lon every minute
+#    aidx = np.argmax(alts)
+#    lata = lats[aidx]       # lat of appogee
+#    lona = lons[aidx]       # lon of appogee
+#
+#    return lats, lons, latsm, lonsm, lata, lona
 
 def load_trajectory():
 
     traj = dict()
-    lat, lon, latm, lonm, lata, lona = load_traj('Traj_Left.txt')
-    traj['Left'] = {'coords':[lat,lon], 'min':[latm,lonm], 'app':[lata,lona]}
+    timel, latl, lonl, altl = np.loadtxt('Traj_Left.txt', skiprows=1, unpack=True)
+    # Map to 110 km along field lines
+    latl, lonl, _ = apex.map_to_height(latl, lonl, altl, 110.)
+    traj['Left'] = {'coords':[latl, lonl]}
 
-    lat, lon, latm, lonm, lata, lona = load_traj('Traj_Right.txt', offset=30.)
-    traj['Right'] = {'coords':[lat,lon], 'min':[latm,lonm], 'app':[lata,lona]}
+    timer, latr, lonr, altr = np.loadtxt('Traj_Right.txt', skiprows=1, unpack=True)
+    # Map to 110 km along field lines
+    latr, lonr, _ = apex.map_to_height(latr, lonr, altr, 110.)
+    #timer -= 30.    # Shift right trajectory time by 30 seconds to line up with left trajectory
+    traj['Right'] = {'coords':[latr, lonr]}
+
+
+    # Coords every minute
+    idx = np.argwhere(timel % 100 == 0)
+    #timem = times[idx].squeeze()
+    #latml = latl[idx].squeeze()     # lat every minute
+    #lonml = lonl[idx].squeeze()     # lon every minute
+    traj['Left']['min'] = [latl[idx].squeeze(), lonl[idx].squeeze()]
+    idx = np.argwhere((timer+30) % 100 == 0)
+    traj['Right']['min'] = [latr[idx].squeeze(), lonr[idx].squeeze()]
+
+    # Coords at apogee
+    aidx = np.argmax(altl)
+    traj['Left']['app'] = [latl[aidx],  lonl[aidx]]
+#    lata = lats[aidx]       # lat of appogee
+#    lona = lons[aidx]       # lon of appogee
+    aidx = np.argmax(altr)
+    traj['Right']['app'] = [latr[aidx],  lonr[aidx]]
+
+    # Coords at left = 280; right = 250
+    idx = np.argmin(np.abs(timel-280.))
+    traj['Left']['mag'] = [latl[idx].squeeze(), lonl[idx].squeeze()]
+    idx = np.argmin(np.abs(timer-250.))
+    traj['Right']['mag'] = [latr[idx].squeeze(), lonr[idx].squeeze()]
+
+
+
+    true_apogee = {'Left': [67.009, -147.317, 319.], 'Right':[66.971, -146.049, 327.]}
+    for k, coords in true_apogee.items():
+        #for tc in true_apogee:
+        lat, lon, alt = coords
+    
+        # Map to 110 km along field lines
+        true_lat, true_lon, _ = apex.map_to_height(lat, lon, alt, 110.)
+
+        traj[k]['true'] = [true_lat, true_lon]
+
+        #ax.scatter(true_lon, true_lat, color='lightcyan', transform=axtrans)
+
+#    traj = dict()
+#    lat, lon, latm, lonm, lata, lona = load_traj('Traj_Left.txt')
+#    traj['Left'] = {'coords':[lat,lon], 'min':[latm,lonm], 'app':[lata,lona]}
+#
+#    lat, lon, latm, lonm, lata, lona = load_traj('Traj_Right.txt', offset=30.)
+#    traj['Right'] = {'coords':[lat,lon], 'min':[latm,lonm], 'app':[lata,lona]}
 
     return traj
 
@@ -310,7 +360,9 @@ def generate_map(skymaps, imgs, pfisr, traj, fast=False):
         ax.plot(t['coords'][1], t['coords'][0], color='red', label='GNEISS trajectory',zorder=7, transform=axtrans)
         ax.scatter(t['min'][1], t['min'][0], color='red', s=15, zorder=7, transform=axtrans)
         ax.scatter(t['app'][1], t['app'][0], color='lavenderblush', label='Apogee', marker='x', zorder=7, transform=axtrans)
+        ax.scatter(t['mag'][1], t['mag'][0], color='oldlace', label='Apogee', marker='+', zorder=7, transform=axtrans)
 
+        ax.scatter(t['true'][1], t['true'][0], color='lightcyan', marker='*', transform=axtrans)
     #ax.plot(lon2, lat2, color='red', zorder=7, transform=axtrans)
     #ax.scatter(lonm2, latm2, color='red', s=15, zorder=7, transform=axtrans)
     #ax.scatter(lona2, lata2, color='lavenderblush', marker='x', zorder=7, transform=axtrans)
