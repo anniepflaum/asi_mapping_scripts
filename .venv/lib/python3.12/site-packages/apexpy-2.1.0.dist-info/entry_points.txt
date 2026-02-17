@@ -1,0 +1,3 @@
+[console_scripts]
+apexpy = apexpy.__main__:main
+
