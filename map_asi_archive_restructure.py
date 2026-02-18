@@ -186,10 +186,12 @@ def plot_fast(skymaps, imgs, pfisr):
             im[m] = np.nan
         im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], im)
         ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img)
+    '''
     print('PFISR')
     pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet', vmin=0, vmax=4e11)
     u, v = scale_uv(pfisr['vlon'], pfisr['vlat'], pfisr['vel'][:, 0], pfisr['vel'][:, 1])
     qp = ax.quiver(pfisr['vlon'], pfisr['vlat'], u, v, zorder=7, scale=5000, width=0.005)
+    '''
     print('Trajectories')
     lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
     lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
@@ -214,12 +216,12 @@ def plot_fast(skymaps, imgs, pfisr):
                  bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
     ax.set_title("GNEISS Ground Sites (magnetic footpointing to 110 km)")
     ax.legend(loc='upper right')
-    ax.quiverkey(qp, 0.1, 0.9, 500., '500 m/s', transform=ax.transAxes)
+    #ax.quiverkey(qp, 0.1, 0.9, 500., '500 m/s', transform=ax.transAxes)
     cax = fig.add_subplot(gs[:, 1])
     cbar = fig.colorbar(im_handle, cax=cax, orientation='vertical')
     cbar.set_label('Green Channel Intensity')
     cax = fig.add_subplot(gs[:, 2])
-    cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
+    #cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
     cbar.set_label(r'Electron Density (m$^{-3}$)')
     plt.tight_layout()
     # Use the date/time from the arguments for the output filename
