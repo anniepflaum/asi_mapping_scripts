@@ -48,23 +48,26 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 apex = Apex()
 
-def load_skymaps():
+def load_skymaps(selected_sites=None):
     """
     Load the latitude and longitude mapping arrays from the skymap.mat file for a given altitude.
     Returns a dictionary of skymaps for each site.
     """
     skymaps = dict()
-    # Uncomment below to load all sites
-    '''
-    lat, lon, az, el, mask = skymap.load_ARV()
-    skymaps['ARV'] = {'site_lat': lat, 'site_lon': lon, 'azmt': az, 'elev': el, 'mask': mask}
-    lat, lon, az, el, mask = skymap.load_VEE()
-    skymaps['VEE'] = {'site_lat': lat, 'site_lon': lon, 'azmt': az, 'elev': el, 'mask': mask}
-    lat, lon, az, el, mask = skymap.load_BVR()
-    skymaps['BVR'] = {'site_lat': lat, 'site_lon': lon, 'azmt': az, 'elev': el, 'mask': mask}
-    '''
-    lat, lon, az, el, mask = skymap.load_PKR()
-    skymaps['PKR'] = {'site_lat': lat, 'site_lon': lon, 'azmt': az, 'elev': el, 'mask': mask}
+    if selected_sites is None:
+        selected_sites = {'ARV', 'PKR', 'VEE', 'BVR'}
+    if 'ARV' in selected_sites:
+        lat, lon, az, el, mask = skymap.load_ARV()
+        skymaps['ARV'] = {'site_lat': lat, 'site_lon': lon, 'azmt': az, 'elev': el, 'mask': mask}
+    if 'VEE' in selected_sites:
+        lat, lon, az, el, mask = skymap.load_VEE()
+        skymaps['VEE'] = {'site_lat': lat, 'site_lon': lon, 'azmt': az, 'elev': el, 'mask': mask}
+    if 'BVR' in selected_sites:
+        lat, lon, az, el, mask = skymap.load_BVR()
+        skymaps['BVR'] = {'site_lat': lat, 'site_lon': lon, 'azmt': az, 'elev': el, 'mask': mask}
+    if 'PKR' in selected_sites:
+        lat, lon, az, el, mask = skymap.load_PKR()
+        skymaps['PKR'] = {'site_lat': lat, 'site_lon': lon, 'azmt': az, 'elev': el, 'mask': mask}
     for sm in skymaps.values():
         lat, lon = skymap.azel2geo(sm['site_lat'], sm['site_lon'], sm['azmt'], sm['elev'], alt=110.)
         sm['lat'] = lat
@@ -324,9 +327,11 @@ def main():
     ap.add_argument("--pretty", action='store_true')
     ap.add_argument("--date", required=True, type=str, default=dt.datetime.now(dt.UTC).strftime("%Y%m%d"), help="Date for the ASI images (format: YYYYMMDD)")
     ap.add_argument("--time", required=True, type=str, default=dt.datetime.now(dt.UTC).strftime("%H%M%S"), help="Time for the ASI images (format: HHMMSS)")
+    ap.add_argument("--sites", nargs='*', default=['ARV', 'PKR', 'VEE', 'BVR'], help="List of sites to process (default: all sites)")
     args = ap.parse_args()
     # --- Load the geographic mapping for the ASI image ---
-    skymaps = load_skymaps()
+    selected_sites = set([s.upper() for s in args.sites])
+    skymaps = load_skymaps(selected_sites)
     # --- Calculate mask for overlaping images ---
     sites = list(skymaps.keys())
     for s0 in sites:
@@ -339,34 +344,44 @@ def main():
     imgs = dict()
     date = args.date
     time_str = args.time
-    '''
-    # ARV
-    try:
-        url_arv = closest_amisr_png_url('ARV', date, time_str)
-        im = retrieve_image(url_arv)
-        imgs['ARV'] = np.flipud(im)
-    except Exception as e:
-        print(f"Could not fetch ARV image: {e}")
-    # VEE
-    try:
-        url_vee = closest_amisr_png_url('VEE', date, time_str)
-        im = retrieve_image(url_vee)
-        imgs['VEE'] = np.flipud(im)
-    except Exception as e:
-        print(f"Could not fetch VEE image: {e}")
-    # BVR
-    try:
-        url_bvr = closest_amisr_png_url('BVR', date, time_str)
-        im = retrieve_image(url_bvr)
-        imgs['BVR'] = np.flipud(im)
-    except Exception as e:
-        print(f"Could not fetch BVR image: {e}")'''
-    # PKR
-    try:
-        url_pkr = closest_amisr_png_url('PKR', date, time_str)
-        imgs['PKR'] = retrieve_image(url_pkr)
-    except Exception as e:
-        print(f"Could not fetch PKR image: {e}")
+
+    #ARV
+    if 'ARV' in selected_sites:
+        try:
+            tiff_path = "../raw_tiffs/ARV/ARV_558_20260210_102102.tiff"
+            im = Image.open(tiff_path)
+            im = np.asarray(im)
+            if im.ndim == 3:
+                im = im[:, :, 0]
+            imgs['ARV'] = im.astype(np.float32)
+        except Exception as e:
+            print(f"Could not load ARV TIFF image: {e}")
+    if 'VEE' in selected_sites:
+        try:
+            tiff_path = "../raw_tiffs/VEE/VEE_558_20260210_102203.tiff"
+            im = Image.open(tiff_path)
+            im = np.asarray(im)
+            if im.ndim == 3:
+                im = im[:, :, 0]
+            imgs['VEE'] = im.astype(np.float32)
+        except Exception as e:
+            print(f"Could not load VEE TIFF image: {e}")
+    if 'BVR' in selected_sites:
+        try:
+            tiff_path = "../raw_tiffs/BVR/BVR_558_20260210_102100.tiff"
+            im = Image.open(tiff_path)
+            im = np.asarray(im)
+            if im.ndim == 3:
+                im = im[:, :, 0]
+            imgs['BVR'] = im.astype(np.float32)
+        except Exception as e:
+            print(f"Could not load BVR TIFF image: {e}")
+    if 'PKR' in selected_sites:
+        try:
+            url_pkr = closest_amisr_png_url('PKR', date, time_str)
+            imgs['PKR'] = retrieve_image(url_pkr)
+        except Exception as e:
+            print(f"Could not fetch PKR image: {e}")
     pfisr = retrieve_pfisr()
     if args.pretty:
         plot_pretty(skymaps, imgs, pfisr)

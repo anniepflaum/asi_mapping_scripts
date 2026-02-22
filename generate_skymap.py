@@ -5,6 +5,7 @@ from astropy.io import fits
 from scipy.io import readsav
 import pymap3d as pm
 import h5py
+from skimage.transform import resize
 
 
 #def azel2geo(centlat, centlon, az, el, mapalt_km=110.):
@@ -95,27 +96,34 @@ def load_PKR():
 def load_VEE():
 
     site_lon, site_lat = [-146.407,  67.013]
-    dat = readsav('VEE_558_latest_az_el_512.sav', python_dict=True)
-    azmap = dat['az_latest_512'].copy()
-    elmap = dat['el_latest_512'].copy()
+    azdat = readsav('../starmaps/VEE/VEE_GASI_5577_20260210_RAW_FULL_Az.sav', python_dict=True)
+    eldat = readsav('../starmaps/VEE/VEE_GASI_5577_20260210_RAW_FULL_El.sav', python_dict=True)
+    azmap = azdat[list(azdat.keys())[0]].copy()
+    elmap = eldat[list(eldat.keys())[0]].copy()
 
     # Super hacky fix to interpolation across the az=0 line
     # This is horrible code, do not repeat anywhere
-    ul = [88, 109]
-    lr = [247,288]
-    i0,j0 = ul
-    i1,j1 = lr
+    # resizing for new raw data skymap dimensions
+    orig_shape = 512
+    new_shape = 750
+    scale = new_shape / orig_shape
 
-    ivec = np.arange(i1-i0) + i0
-    m = (j1-j0)/(i1-i0)
-    jvec = m*(ivec-i0) + j0
-    jvec2 = jvec.astype(int)-4
-    jvec3 = jvec.astype(int)+4
+    # Scale indices
+    ul = [int(88 * scale), int(109 * scale)]
+    lr = [int(247 * scale), int(288 * scale)]
+    i0, j0 = ul
+    i1, j1 = lr
 
-    for i in ivec:
-        fix_area = azmap[jvec2[i-i0]:jvec3[i-i0],i]
-        fix_area[(fix_area>5.) & (fix_area<355.)] = 0.
-        azmap[jvec2[i-i0]:jvec3[i-i0],i] = fix_area
+    ivec = np.arange(i1 - i0) + i0
+    m = (j1 - j0) / (i1 - i0)
+    jvec = m * (ivec - i0) + j0
+    jvec2 = jvec.astype(int) - int(4 * scale)
+    jvec3 = jvec.astype(int) + int(4 * scale)
+
+    for idx, i in enumerate(ivec):
+        fix_area = azmap[jvec2[idx]:jvec3[idx], i]
+        fix_area[(fix_area > 5.) & (fix_area < 355.)] = 0.
+        azmap[jvec2[idx]:jvec3[idx], i] = fix_area
 
     #azmap = azmap-24.
     #azmap[azmap<=0.] += 360.
@@ -134,36 +142,12 @@ def load_VEE():
 def load_BVR():
     site_lon, site_lat = [-147.4,    66.36]
 
-    dat = readsav('BVR_558_latest_az_el_512.sav', python_dict=True)
-    azmap = dat['az_latest_512'].copy()
-    elmap = dat['el_latest_512'].copy()
+    azdat = readsav('../starmaps/BVR/BVR_GASI_5577_20260209_RAW_FULL_Az.sav', python_dict=True)
+    eldat = readsav('../starmaps/BVR/BVR_GASI_5577_20260209_RAW_FULL_El.sav', python_dict=True)
+    azmap = azdat[list(azdat.keys())[0]].copy()
+    elmap = eldat[list(eldat.keys())[0]].copy()
 
-    ## Super hacky fix to interpolation across the az=0 line
-    ## This is horrible code, do not repeat anywhere
-    #ul = [47, 158]
-    #lr = [248,290]
-    #i0,j0 = ul
-    #i1,j1 = lr
-
-    #ivec = np.arange(i1-i0) + i0
-    #m = (j1-j0)/(i1-i0)
-    #jvec = m*(ivec-i0) + j0
-    #jvec2 = jvec.astype(int)-3
-    #jvec3 = jvec.astype(int)+3
-
-    #for i in ivec:
-    #    fix_area = azmap[jvec2[i-i0]:jvec3[i-i0],i]
-    #    fix_area[(fix_area>5.) & (fix_area<355.)] = 0.
-    #    azmap[jvec2[i-i0]:jvec3[i-i0],i] = fix_area
-
-    #import matplotlib.pyplot as plt
-    #plt.imshow(azmap)
-    #plt.show()
-
-    #azmap = azmap-24.
-    #azmap[azmap<=0.] += 360.
-
-    mask = elmap<15.
+    mask = elmap < 15.
 
     return site_lat, site_lon, azmap, elmap, mask
 
@@ -172,13 +156,19 @@ def load_BVR():
 def load_ARV():
     site_lon, site_lat = [-145.533,  68.127]
     
-    dat = readsav('ARV_558_latest_az_el_512.sav', python_dict=True)
-    azmap = dat['az_latest_512'].copy()
-    elmap = dat['el_latest_512'].copy()
 
-    mask = elmap<15.
+    azdat = readsav('../starmaps/ARV/ARV_GASI_5577_20260209_RAW_Full_Az.sav', python_dict=True)
+    eldat = readsav('../starmaps/ARV/ARV_GASI_5577_20260209_RAW_Full_El.sav', python_dict=True)
+    azmap = azdat[list(azdat.keys())[0]].copy()
+    elmap = eldat[list(eldat.keys())[0]].copy()
+
+    mask = elmap < 15.
+
+    # Downsample to 750x750 to match TIFF images
+    target_shape = (750, 750)
+    azmap = resize(azmap, target_shape, order=1, preserve_range=True, anti_aliasing=True)
+    elmap = resize(elmap, target_shape, order=1, preserve_range=True, anti_aliasing=True)
+    mask = resize(mask.astype(float), target_shape, order=0, preserve_range=True) > 0.5
 
     return site_lat, site_lon, azmap, elmap, mask
-
-
 
