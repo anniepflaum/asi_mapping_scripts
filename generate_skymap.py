@@ -163,7 +163,7 @@ def load_ARV():
     elmap = eldat[list(eldat.keys())[0]].copy()
 
     mask = elmap < 15.
-
+  
     # Downsample to 750x750 to match TIFF images
     target_shape = (750, 750)
     azmap = resize(azmap, target_shape, order=1, preserve_range=True, anti_aliasing=True)

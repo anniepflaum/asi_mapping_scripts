@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 """
-map_asi_PKR_realtime.py
+map_asi_archive_restructure.py
 
-This script downloads the latest all-sky imager (ASI) green channel image from the Poker Flat Research Range (PKR) in Alaska,
-maps it to geographic latitude/longitude coordinates using a provided skymap, and overlays rocket trajectories.
-The output is a PNG image showing the mapped green channel intensity and rocket paths.
+Script for mapping and visualizing all-sky imager (ASI) data from multiple ground sites (ARV, VEE, BVR, PKR).
+Processes local multi-page TIFFs for ARV, VEE, BVR, and fetches PKR images from the web.
+Selects frames by timestamp, normalizes intensities, overlays rocket trajectories, and saves unified output.
 
 Usage:
-    python map_asi_PKR_realtime.py --skymap skymap.mat --alt-km 110 --nx 512 --ny 512
+    python map_asi_archive_restructure.py --time HHMMSS --sites ARV BVR VEE PKR
 
 Arguments:
-    --skymap         Path to the .mat file containing the geographic mapping for the ASI
-    --alt-km         Altitude (in km) for the mapping grid
-    --nx, --ny       Output grid size in longitude and latitude
-    --padding-deg    Optional: extra padding (in degrees) around the mapped region
-    --lon-convention Optional: longitude format
+    --date           Date for the ASI images (format: YYYYMMDD)
+    --time           Time for the ASI images (format: HHMMSS)
+    --sites          List of sites to process (default: all sites)
+    --pretty         Use pretty Cartopy plotting (default: fast plotting)
 """
 
-# --- Standard imports ---
+###############################################################
+# --- Standard imports and dependencies ---
+###############################################################
 import argparse
 import os
 import numpy as np
@@ -38,6 +39,10 @@ import datetime as dt
 import time
 import check_intersect as ci
 import generate_skymap as skymap
+import tifffile
+import json
+import re
+from inspect import currentframe
 from fetch_url import closest_amisr_png_url
 from resolvedvelocities.ResolveVectorsLat import ResolveVectorsLat
 
@@ -50,8 +55,8 @@ apex = Apex()
 
 def load_skymaps(selected_sites=None):
     """
-    Load the latitude and longitude mapping arrays from the skymap.mat file for a given altitude.
-    Returns a dictionary of skymaps for each site.
+    Loads latitude and longitude mapping arrays for each site using skymap module.
+    Returns a dictionary of skymaps for each site, including azimuth/elevation and masks.
     """
     skymaps = dict()
     if selected_sites is None:
@@ -77,7 +82,7 @@ def load_skymaps(selected_sites=None):
 
 def scale_uv(lon, lat, u, v):
     """
-    Fixes vector scaling/rotation for cartopy quiver plots.
+    Adjusts vector scaling/rotation for cartopy quiver plots to account for latitude distortion.
     """
     us = u / np.cos(lat * np.pi / 180.)
     vs = v
@@ -87,9 +92,10 @@ def scale_uv(lon, lat, u, v):
 
 def retrieve_image(url):
     """
-    Download and return a single-channel image from a URL as a float32 numpy array.
+    Downloads a single-channel image from a URL and returns it as a float32 numpy array.
+    Used for PKR site images.
     """
-    print(f"Downloading {url} ...")
+    print(f"PKR: {url} ...")
     resp = requests.get(url, verify=False)  # verify=False disables SSL cert check (safe for public data)
     resp.raise_for_status()
     img = Image.open(BytesIO(resp.content))
@@ -102,8 +108,9 @@ def retrieve_image(url):
 
 def load_traj(filename):
     """
-    Load latitude and longitude columns from a trajectory text file.
-    Returns mapped lats/lons at 110 km, and apogee location.
+    Loads rocket trajectory from a text file.
+    Maps lat/lon to 110 km altitude using Apex.
+    Returns full trajectory, minute marks, and apogee location.
     """
     times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
     lats, lons, _ = apex.map_to_height(lats, lons, alts, 110.)
@@ -119,10 +126,11 @@ def load_traj(filename):
 
 def retrieve_pfisr():
     """
-    Download and process PFISR data, returning a dictionary of relevant arrays.
+    Downloads and processes PFISR data.
+    Returns electron density, velocity, and location arrays for plotting.
     """
     url = "https://amisr.com/realtime/plots/fitted/single/dtc3/current.h5"
-    print(f"Downloading {url} ...")
+    #print(f"Downloading {url} ...")
     resp = requests.get(url, stream=True)
     resp.raise_for_status()
     with open('pfisr_latest.h5', 'wb') as fd:
@@ -155,11 +163,15 @@ def retrieve_pfisr():
     return pfisr_data
 
 
-# --- PLOTTING FUNCTIONS ---
 
-def plot_fast(skymaps, imgs, pfisr):
+###############################################################
+# --- PLOTTING FUNCTIONS ---
+###############################################################
+
+def plot_fast(skymaps, imgs, pfisr, output_path=None):
     """
-    Fast plotting mode: overlays images, PFISR, and trajectories on a simple map.
+    Fast plotting mode: overlays ASI images, PFISR data, and rocket trajectories on a simple map.
+    Used for quick visualization without Cartopy.
     """
     coastlons = np.loadtxt('coastlon.txt')
     coastlats = np.loadtxt('coastlat.txt')
@@ -182,7 +194,6 @@ def plot_fast(skymaps, imgs, pfisr):
         ax1[site].grid()
         ax1[site].set_title(site)
     for site, img in imgs.items():
-        print(site)
         img[skymaps[site]['mask']] = np.nan
         im = img.copy()
         for m in skymaps[site]['extra_masks'].values():
@@ -205,7 +216,6 @@ def plot_fast(skymaps, imgs, pfisr):
     ax.scatter(lonm2, latm2, color='red', s=15, zorder=7)
     ax.scatter(lona2, lata2, color='lavenderblush', marker='x', zorder=7)
     # Use the date/time from the arguments for the plot text
-    from inspect import currentframe
     frame = currentframe()
     args = frame.f_back.f_locals.get('args', None)
     if args is not None:
@@ -227,19 +237,20 @@ def plot_fast(skymaps, imgs, pfisr):
     #cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
     cbar.set_label(r'Electron Density (m$^{-3}$)')
     plt.tight_layout()
-    # Use the date/time from the arguments for the output filename
-    if args is not None:
-        output_path = f"../mapped/GNEISS_launch_science_fast_{date_str}_{time_str}.png"
-    else:
-        output_path = f"../mapped/GNEISS_launch_science_fast_{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S}.png"
+    # Use provided output_path if given
+    if output_path is None:
+        if args is not None:
+            output_path = f"../mapped/GNEISS_launch_science_fast_{date_str}_{time_str}.png"
+        else:
+            output_path = f"../mapped/GNEISS_launch_science_fast_{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S}.png"
     plt.savefig(output_path, dpi=150)
     print(f"Saved mapped image to {output_path}")
     # plt.show()
 
 
-def plot_pretty(skymaps, imgs, pfisr):
+def plot_pretty(skymaps, imgs, pfisr, output_path=None):
     """
-    Pretty plotting mode: overlays images, PFISR, and trajectories on a Cartopy map.
+    Pretty plotting mode: overlays ASI images, PFISR data, and rocket trajectories on a Cartopy map.
     """
     proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
     fig = plt.figure(figsize=(15, 10))
@@ -261,7 +272,6 @@ def plot_pretty(skymaps, imgs, pfisr):
         ax1[site].set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
         ax1[site].set_title(site)
     for site, img in imgs.items():
-        print(site)
         img[skymaps[site]['mask']] = np.nan
         im = img.copy()
         lat = skymaps[site]['lat'].copy()
@@ -276,10 +286,13 @@ def plot_pretty(skymaps, imgs, pfisr):
         latf = lat[np.isfinite(im)].flatten()
         lonf = lon[np.isfinite(im)].flatten()
         ax.tripcolor(lonf, latf, imf, transform=ccrs.PlateCarree())
+    '''
     print('PFISR')
     pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet', transform=ccrs.Geodetic())
     u, v = scale_uv(pfisr['vlon'], pfisr['vlat'], pfisr['vel'][:, 0], pfisr['vel'][:, 1], vmin=0, vmax=4e11)
     qp = ax.quiver(pfisr['vlon'], pfisr['vlat'], u, v, zorder=7, scale=5000, width=0.005, transform=ccrs.PlateCarree())
+    '''
+    # Plot trajectories only once after all sites
     print('Trajectory')
     lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
     lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
@@ -294,24 +307,24 @@ def plot_pretty(skymaps, imgs, pfisr):
                  transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom',
                  bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
     ax.legend(loc='upper right')
-    ax.quiverkey(qp, 0.1, 0.9, 500., '500 m/s', transform=ax.transAxes)
+    #ax.quiverkey(qp, 0.1, 0.9, 500., '500 m/s', transform=ax.transAxes)
     cax = fig.add_subplot(gs[:, 1])
     cbar = fig.colorbar(im_handle, cax=cax, orientation='vertical')
     cbar.set_label('Green Channel Intensity')
     cax = fig.add_subplot(gs[:, 2])
-    cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
+    #cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
     cbar.set_label(r'Electron Density (m$^{-3}$)')
     plt.tight_layout()
-    # Use the date/time from the arguments for the output filename
-    from inspect import currentframe
-    frame = currentframe()
-    args = frame.f_back.f_locals.get('args', None)
-    if args is not None:
-        date_str = args.date
-        time_str = args.time
-        output_path = f"../launch_science_pretty/GNEISS_launch_science_pretty_{date_str}_{time_str}.png"
-    else:
-        output_path = f"../launch_science_pretty/GNEISS_launch_science_pretty_{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S}.png"
+    # Use provided output_path if given
+    if output_path is None:
+        frame = currentframe()
+        args = frame.f_back.f_locals.get('args', None)
+        if args is not None:
+            date_str = args.date
+            time_str = args.time
+            output_path = f"../launch_science_pretty/GNEISS_launch_science_pretty_{date_str}_{time_str}.png"
+        else:
+            output_path = f"../launch_science_pretty/GNEISS_launch_science_pretty_{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S}.png"
     plt.savefig(output_path, dpi=150)
     print(f"Saved mapped image to {output_path}")
     # plt.show()
@@ -319,20 +332,23 @@ def plot_pretty(skymaps, imgs, pfisr):
 
 def main():
     """
-    Main entry point: parses arguments, loads data, and runs plotting.
+    Main entry point: parses command-line arguments, loads skymaps, processes images for each site,
+    normalizes and selects frames, overlays PFISR and rocket trajectories, and saves the mapped output.
     """
     ticall = time.time()
     # --- Parse command-line arguments ---
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pretty", action='store_true')
-    ap.add_argument("--date", required=True, type=str, default=dt.datetime.now(dt.UTC).strftime("%Y%m%d"), help="Date for the ASI images (format: YYYYMMDD)")
+    ap.add_argument("--pretty", action='store_true')  # Use pretty Cartopy plotting
+    ap.add_argument("--date", required=False, type=str, default="20260210", help="Date for the ASI images (format: YYYYMMDD)")
     ap.add_argument("--time", required=True, type=str, default=dt.datetime.now(dt.UTC).strftime("%H%M%S"), help="Time for the ASI images (format: HHMMSS)")
     ap.add_argument("--sites", nargs='*', default=['ARV', 'PKR', 'VEE', 'BVR'], help="List of sites to process (default: all sites)")
     args = ap.parse_args()
-    # --- Load the geographic mapping for the ASI image ---
+
+    # --- Load geographic mapping for each ASI site ---
     selected_sites = set([s.upper() for s in args.sites])
     skymaps = load_skymaps(selected_sites)
-    # --- Calculate mask for overlaping images ---
+
+    # --- Calculate masks for overlapping images between sites ---
     sites = list(skymaps.keys())
     for s0 in sites:
         red_sites = sites.copy()
@@ -341,52 +357,119 @@ def main():
         for s1 in red_sites:
             m0, m1 = ci.calculate_masks(skymaps[s0]['site_lat'], skymaps[s0]['site_lon'], skymaps[s0]['azmt'], skymaps[s0]['elev'], skymaps[s1]['site_lat'], skymaps[s1]['site_lon'], skymaps[s1]['azmt'], skymaps[s1]['elev'])
             skymaps[s0]['extra_masks'][s1] = m0
-    imgs = dict()
+
+    imgs = dict()  # Stores processed images for each site
     date = args.date
     time_str = args.time
 
-    #ARV
+    # --- Retrieve PFISR data for overlay ---
+    pfisr = retrieve_pfisr()
+
+    # --- Process ARV site: select closest frame by time, normalize, and store ---
     if 'ARV' in selected_sites:
+        tiff_path = "../raw_tiffs/ARV/ARV_558_20260210_102402.tiff"
         try:
-            tiff_path = "../raw_tiffs/ARV/ARV_558_20260210_102102.tiff"
-            im = Image.open(tiff_path)
-            im = np.asarray(im)
-            if im.ndim == 3:
-                im = im[:, :, 0]
-            imgs['ARV'] = im.astype(np.float32)
+            # Extract start time from TIFF filename
+            m = re.search(r'_(\d{8})_(\d{6})\.tiff$', tiff_path)
+            if not m:
+                raise ValueError("Could not parse start time from TIFF filename")
+            date_str, time_str_file = m.group(1), m.group(2)
+            start_dt = dt.datetime.strptime(date_str + time_str_file, "%Y%m%d%H%M%S")
+            # Parse --time argument
+            target_dt = dt.datetime.strptime(date + time_str, "%Y%m%d%H%M%S")
+            # Compute frame times for all 600 frames (0.3s interval)
+            n_frames = 600  # or len(tif.pages) if variable
+            frame_interval = 0.3  # seconds
+            frame_times = [start_dt + dt.timedelta(seconds=i*frame_interval) for i in range(n_frames)]
+            # Find closest frame to requested time
+            closest_idx = min(range(n_frames), key=lambda i: abs((frame_times[i] - target_dt).total_seconds()))
+            print(f"ARV: Using frame {closest_idx+1}/{n_frames}")
+            with tifffile.TiffFile(tiff_path) as tif:
+                page = tif.pages[closest_idx]
+                im = page.asarray()
+                if im.ndim == 3:
+                    im = im[:, :, 0]
+                # Percentile-based normalization to boost auroral contrast and reduce outlier effects
+                vmin = np.percentile(im, 1)
+                vmax = np.percentile(im, 99)
+                im_boost = np.clip((im - vmin) / (vmax - vmin), 0, 1)
+                imgs['ARV'] = im_boost.astype(np.float32)
         except Exception as e:
             print(f"Could not load ARV TIFF image: {e}")
+    # --- Process VEE site: select closest frame by time, normalize, and store ---
     if 'VEE' in selected_sites:
         try:
             tiff_path = "../raw_tiffs/VEE/VEE_558_20260210_102203.tiff"
-            im = Image.open(tiff_path)
-            im = np.asarray(im)
-            if im.ndim == 3:
-                im = im[:, :, 0]
-            imgs['VEE'] = im.astype(np.float32)
+            m = re.search(r'_(\d{8})_(\d{6})\.tiff$', tiff_path)
+            if not m:
+                raise ValueError("Could not parse start time from TIFF filename for VEE")
+            date_str, time_str_file = m.group(1), m.group(2)
+            start_dt = dt.datetime.strptime(date_str + time_str_file, "%Y%m%d%H%M%S")
+            target_dt = dt.datetime.strptime(date + time_str, "%Y%m%d%H%M%S")
+            n_frames = 600
+            frame_interval = 0.3
+            frame_times = [start_dt + dt.timedelta(seconds=i*frame_interval) for i in range(n_frames)]
+            closest_idx = min(range(n_frames), key=lambda i: abs((frame_times[i] - target_dt).total_seconds()))
+            print(f"VEE: Using frame {closest_idx+1}/{n_frames}")
+            with tifffile.TiffFile(tiff_path) as tif:
+                page = tif.pages[closest_idx]
+                im = page.asarray()
+                if im.ndim == 3:
+                    im = im[:, :, 0]
+                # Percentile-based normalization to boost auroral contrast and reduce outlier effects    
+                vmin = np.percentile(im, 1)
+                vmax = np.percentile(im, 99)
+                im_boost = np.clip((im - vmin) / (vmax - vmin), 0, 1)
+                imgs['VEE'] = im_boost.astype(np.float32)
         except Exception as e:
             print(f"Could not load VEE TIFF image: {e}")
+    # --- Process BVR site: select closest frame by time, normalize, and store ---
     if 'BVR' in selected_sites:
         try:
-            tiff_path = "../raw_tiffs/BVR/BVR_558_20260210_102100.tiff"
-            im = Image.open(tiff_path)
-            im = np.asarray(im)
-            if im.ndim == 3:
-                im = im[:, :, 0]
-            imgs['BVR'] = im.astype(np.float32)
+            tiff_path = "../raw_tiffs/BVR/BVR_558_20260210_102400.tiff"
+            m = re.search(r'_(\d{8})_(\d{6})\.tiff$', tiff_path)
+            if not m:
+                raise ValueError("Could not parse start time from TIFF filename for BVR")
+            date_str, time_str_file = m.group(1), m.group(2)
+            start_dt = dt.datetime.strptime(date_str + time_str_file, "%Y%m%d%H%M%S")
+            target_dt = dt.datetime.strptime(date + time_str, "%Y%m%d%H%M%S")
+            n_frames = 600
+            frame_interval = 0.3
+            frame_times = [start_dt + dt.timedelta(seconds=i*frame_interval) for i in range(n_frames)]
+            closest_idx = min(range(n_frames), key=lambda i: abs((frame_times[i] - target_dt).total_seconds()))
+            print(f"BVR: Using frame {closest_idx+1}/{n_frames}")
+            with tifffile.TiffFile(tiff_path) as tif:
+                page = tif.pages[closest_idx]
+                im = page.asarray()
+                if im.ndim == 3:
+                    im = im[:, :, 0]
+                # Percentile-based normalization to boost auroral contrast and reduce outlier effects
+                vmin = np.percentile(im, 1)
+                vmax = np.percentile(im, 99)
+                im_boost = np.clip((im - vmin) / (vmax - vmin), 0, 1)
+                imgs['BVR'] = im_boost.astype(np.float32)
         except Exception as e:
             print(f"Could not load BVR TIFF image: {e}")
+    # --- Process PKR site: fetch image from web and store ---
     if 'PKR' in selected_sites:
         try:
             url_pkr = closest_amisr_png_url('PKR', date, time_str)
             imgs['PKR'] = retrieve_image(url_pkr)
         except Exception as e:
             print(f"Could not fetch PKR image: {e}")
-    pfisr = retrieve_pfisr()
-    if args.pretty:
-        plot_pretty(skymaps, imgs, pfisr)
-    else:
-        plot_fast(skymaps, imgs, pfisr)
+
+    # --- Compose output path for mapped image, include plotting mode ---
+    sites_str = '_'.join(sorted(selected_sites))
+    mode_str = 'pretty' if args.pretty else 'fast'
+    output_path = f"../mapped/GNEISS_launch_{mode_str}_{sites_str}_{date}_{time_str}.png"
+
+    # --- Run downstream plotting for all processed sites ---
+    if imgs:
+        if args.pretty:
+            plot_pretty(skymaps, imgs, pfisr, output_path=output_path)
+        else:
+            plot_fast(skymaps, imgs, pfisr, output_path=output_path)
+
     tocall = time.time()
     print(f"Total run time: {tocall - ticall:.2f} s")
 
