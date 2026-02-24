@@ -26,6 +26,8 @@ import sys
 import datetime as dt
 import imageio.v3 as iio
 from tqdm import tqdm
+import imageio.v2 as imageio
+import shutil
 
 def time_range(start, end, step):
     """Yield time strings from start to end (inclusive) with given step in seconds."""
@@ -37,12 +39,12 @@ def time_range(start, end, step):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--date", required=True, type=str, help="Date for the ASI images (YYYYMMDD)")
+    parser.add_argument("--date", default="20260210", type=str, help="Date for the ASI images (YYYYMMDD)")
     parser.add_argument("--start", required=True, type=str, help="Start time (HHMMSS)")
     parser.add_argument("--end", required=True, type=str, help="End time (HHMMSS)")
     parser.add_argument("--step", type=int, default=60, help="Step in seconds between frames")
     parser.add_argument("--pretty", action="store_true", help="Use pretty plotting mode")
-    parser.add_argument("--output", type=str, default="../mapped/asi_video.mp4", help="Output video filename")
+    parser.add_argument("--sites", nargs='*', default=['ARV', 'BVR', 'VEE', 'PKR'], help="List of sites to process (default: all sites)")
     args = parser.parse_args()
 
     # Directory for intermediate PNGs
@@ -50,23 +52,27 @@ def main():
     os.makedirs(png_dir, exist_ok=True)
     frame_paths = []
 
+    # Compose sites string for output filenames
+    sites_str = '_'.join(sorted([s.upper() for s in args.sites]))
+
+    # Set output video path to ../mapped/GNEISS_launch_{sites_str}.mp4
+    args.output = f"../mapped/GNEISS_launch_{sites_str}.mp4"
+
     # Generate frames
     print("Generating frames...")
     for tstr in tqdm(list(time_range(args.start, args.end, args.step))):
-        outname = f"GNEISS_launch_science_fast_{args.date}_{tstr}.png"
-        if args.pretty:
-            outname = f"GNEISS_launch_science_pretty_{args.date}_{tstr}.png"
+        mode = "pretty" if args.pretty else "fast"
+        outname = f"GNEISS_launch_{mode}_{sites_str}_{args.date}_{tstr}.png"
         outpath = os.path.join(png_dir, outname)
         cmd = [sys.executable, "map_asi_archive_restructure.py",
-               "--date", args.date, "--time", tstr]
+                "--time", tstr, "--sites"] + args.sites
         if args.pretty:
             cmd.append("--pretty")
-        # Patch: move output to png_dir by symlinking or moving after creation
         # Suppress output from map_asi_archive_restructure.py
         with open(os.devnull, 'w') as devnull:
             subprocess.run(cmd, check=True, stdout=devnull, stderr=devnull)
         # Move the output PNG to png_dir
-        src = f"../mapped/{outname}" if not args.pretty else f"../launch_science_pretty/{outname}"
+        src = f"../mapped/{outname}"
         if not os.path.exists(src):
             print(f"Warning: {src} not found, skipping.")
             continue
@@ -78,7 +84,6 @@ def main():
         return
 
     # Create video
-    import imageio.v2 as imageio
     print(f"Writing video to {args.output} ...")
     frames = [imageio.imread(frame) for frame in frame_paths]
     # Use ffmpeg writer explicitly for mp4 output
@@ -86,7 +91,6 @@ def main():
 
     # Delete intermediate PNGs
     print("Cleaning up intermediate PNGs...")
-    import shutil
     for f in os.listdir(png_dir):
         try:
             os.remove(os.path.join(png_dir, f))
