@@ -106,11 +106,12 @@ def retrieve_image(url):
     return img.astype(np.float32)
 
 
-def load_traj(filename):
+def load_traj(filename, map_time=None):
     """
     Loads rocket trajectory from a text file.
     Maps lat/lon to 110 km altitude using Apex.
-    Returns full trajectory, minute marks, and apogee location.
+    Returns full trajectory, minute marks, apogee location, and optionally the trajectory point corresponding to map_time.
+    map_time: string in HHMMSS format (requested map time)
     """
     times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
     lats, lons, _ = apex.map_to_height(lats, lons, alts, 110.)
@@ -121,7 +122,35 @@ def load_traj(filename):
     aidx = np.argmax(alts)
     lata = lats[aidx]
     lona = lons[aidx]
-    return lats, lons, latsm, lonsm, lata, lona
+
+    # Determine launch start time based on filename
+    if 'traj_right' in filename.lower():
+        launch_start = 101900
+    elif 'traj_left' in filename.lower():
+        launch_start = 101930
+    else:
+        launch_start = None
+
+    traj_time_idx = None
+    traj_lat_at_map = None
+    traj_lon_at_map = None
+    if map_time is not None and launch_start is not None:
+        # Convert map_time and launch_start to seconds since midnight
+        def hms_to_sec(hms):
+            h = int(hms[:2])
+            m = int(hms[2:4])
+            s = int(hms[4:])
+            return h*3600 + m*60 + s
+        map_sec = hms_to_sec(map_time)
+        launch_sec = hms_to_sec(str(launch_start).zfill(6))
+        rel_sec = map_sec - launch_sec
+        # Find closest time in trajectory
+        if rel_sec >= 0 and rel_sec <= times[-1]:
+            traj_time_idx = np.argmin(np.abs(times - rel_sec))
+            traj_lat_at_map = lats[traj_time_idx]
+            traj_lon_at_map = lons[traj_time_idx]
+
+    return lats, lons, latsm, lonsm, lata, lona, traj_lat_at_map, traj_lon_at_map
 
 
 def retrieve_pfisr():
@@ -168,13 +197,15 @@ def retrieve_pfisr():
 # --- PLOTTING FUNCTIONS ---
 ###############################################################
 
-def plot_fast(skymaps, imgs, pfisr, output_path=None):
+def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None):
     """
     Fast plotting mode: overlays ASI images, PFISR data, and rocket trajectories on a simple map.
     Used for quick visualization without Cartopy.
     """
+    # Load coastline data
     coastlons = np.loadtxt('coastlon.txt')
     coastlats = np.loadtxt('coastlat.txt')
+    # Create figure and main axis
     fig = plt.figure(figsize=(15, 10))
     gs = gridspec.GridSpec(4, 4, width_ratios=[4, 0.2, 0.2, 1])
     ax = fig.add_subplot(gs[:, 0])
@@ -183,7 +214,7 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None):
     ax.set_xlim(xmin=-170, xmax=-135)
     ax.set_aspect(2.2)
     ax.grid()
-    # Sidebar plots for each site
+    # Create sidebar axes for each site
     ax1 = dict()
     for i, site in enumerate(imgs.keys()):
         ax1[site] = fig.add_subplot(gs[i, -1])
@@ -193,6 +224,7 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None):
         ax1[site].set_aspect(2.2)
         ax1[site].grid()
         ax1[site].set_title(site)
+    # Plot each site's mapped image
     for site, img in imgs.items():
         img[skymaps[site]['mask']] = np.nan
         im = img.copy()
@@ -200,22 +232,19 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None):
             im[m] = np.nan
         im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], im)
         ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img)
-    '''
-    print('PFISR')
-    pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet', vmin=0, vmax=4e11)
-    u, v = scale_uv(pfisr['vlon'], pfisr['vlat'], pfisr['vel'][:, 0], pfisr['vel'][:, 1])
-    qp = ax.quiver(pfisr['vlon'], pfisr['vlat'], u, v, zorder=7, scale=5000, width=0.005)
-    '''
-    print('Trajectories')
-    lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
-    lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
+    # Plot rocket trajectories and minute marks
+    lat1, lon1, latm1, lonm1, lata1, lona1, lat_map1, lon_map1 = load_traj('Traj_Left.txt', map_time=map_time)
+    lat2, lon2, latm2, lonm2, lata2, lona2, lat_map2, lon_map2 = load_traj('Traj_Right.txt', map_time=map_time)
     ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', zorder=7)
     ax.scatter(lonm1, latm1, color='red', s=15, zorder=7)
-    ax.scatter(lona1, lata1, color='lavenderblush', label='Apogee', marker='x', zorder=7)
     ax.plot(lon2, lat2, color='red', zorder=7)
     ax.scatter(lonm2, latm2, color='red', s=15, zorder=7)
-    ax.scatter(lona2, lata2, color='lavenderblush', marker='x', zorder=7)
-    # Use the date/time from the arguments for the plot text
+    # Mark position at map time if available
+    if lat_map1 is not None and lon_map1 is not None:
+        ax.scatter(lon_map1, lat_map1, color='orange', s=50, marker='o', zorder=8, label='Position at map time')
+    if lat_map2 is not None and lon_map2 is not None:
+        ax.scatter(lon_map2, lat_map2, color='orange', s=50, marker='o', zorder=8)
+    # Add plot text for date/time
     frame = currentframe()
     args = frame.f_back.f_locals.get('args', None)
     if args is not None:
@@ -237,7 +266,7 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None):
     #cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
     cbar.set_label(r'Electron Density (m$^{-3}$)')
     plt.tight_layout()
-    # Use provided output_path if given
+    # Save figure
     if output_path is None:
         if args is not None:
             output_path = f"../mapped/GNEISS_launch_science_fast_{date_str}_{time_str}.png"
@@ -251,10 +280,13 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None):
 def plot_pretty(skymaps, imgs, pfisr, output_path=None):
     """
     Pretty plotting mode: overlays ASI images, PFISR data, and rocket trajectories on a Cartopy map.
+    Used for publication-quality visualization.
     """
+    # Set up Cartopy projection
     proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
     fig = plt.figure(figsize=(15, 10))
     gs = gridspec.GridSpec(4, 4, width_ratios=[4, 0.2, 0.2, 1])
+    # Main map axis
     ax = fig.add_subplot(gs[:, 0], projection=proj)
     ax.set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
     ax.add_feature(cfeature.LAND.with_scale("50m"), zorder=0)
@@ -262,7 +294,9 @@ def plot_pretty(skymaps, imgs, pfisr, output_path=None):
     ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.8, zorder=2)
     ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.5, zorder=2)
     ax.gridlines()
+    # Add magnetic grid lines
     mcm.maggridlines(ax, apex=apex, apex_height=110.)
+    # Sidebar axes for each site
     ax1 = dict()
     for i, site in enumerate(imgs.keys()):
         ax1[site] = fig.add_subplot(gs[i, -1], projection=proj)
@@ -271,6 +305,7 @@ def plot_pretty(skymaps, imgs, pfisr, output_path=None):
         mcm.maggridlines(ax1[site], apex=apex, apex_height=110.)
         ax1[site].set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
         ax1[site].set_title(site)
+    # Plot each site's mapped image
     for site, img in imgs.items():
         img[skymaps[site]['mask']] = np.nan
         im = img.copy()
@@ -286,36 +321,39 @@ def plot_pretty(skymaps, imgs, pfisr, output_path=None):
         latf = lat[np.isfinite(im)].flatten()
         lonf = lon[np.isfinite(im)].flatten()
         ax.tripcolor(lonf, latf, imf, transform=ccrs.PlateCarree())
-    '''
+    # Plot PFISR data
     print('PFISR')
     pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet', transform=ccrs.Geodetic())
     u, v = scale_uv(pfisr['vlon'], pfisr['vlat'], pfisr['vel'][:, 0], pfisr['vel'][:, 1], vmin=0, vmax=4e11)
     qp = ax.quiver(pfisr['vlon'], pfisr['vlat'], u, v, zorder=7, scale=5000, width=0.005, transform=ccrs.PlateCarree())
-    '''
-    # Plot trajectories only once after all sites
+    # Plot rocket trajectories and minute marks
     print('Trajectory')
-    lat1, lon1, latm1, lonm1, lata1, lona1 = load_traj('Traj_Left.txt')
-    lat2, lon2, latm2, lonm2, lata2, lona2 = load_traj('Traj_Right.txt')
+    lat1, lon1, latm1, lonm1, lata1, lona1, lat_map1, lon_map1 = load_traj('Traj_Left.txt')
+    lat2, lon2, latm2, lonm2, lata2, lona2, lat_map2, lon_map2 = load_traj('Traj_Right.txt')
     ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=7)
     ax.scatter(lonm1, latm1, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
-    ax.scatter(lona1, lata1, color='lavenderblush', marker='x', label='Apogee', transform=ccrs.PlateCarree(), zorder=8)
     ax.plot(lon2, lat2, color='red', transform=ccrs.PlateCarree(), zorder=7)
     ax.scatter(lonm2, latm2, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
-    ax.scatter(lona2, lata2, color='lavenderblush', marker='x', transform=ccrs.PlateCarree(), zorder=8)
-    ax.set_title("GNEISS Ground Sites (magnetic footpointing to 110 km)")
+    # Mark position at map time if available
+    if lat_map1 is not None and lon_map1 is not None:
+        ax.scatter(lon_map1, lat_map1, color='orange', s=50, marker='o', zorder=8, label='Position at map time')
+    if lat_map2 is not None and lon_map2 is not None:
+        ax.scatter(lon_map2, lat_map2, color='orange', s=50, marker='o', zorder=8)
+    # Add plot text for date/time
     txt = ax.text(0.99, 0.01, dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S"),
                  transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom',
                  bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
+    ax.set_title("GNEISS Ground Sites (magnetic footpointing to 110 km)")
     ax.legend(loc='upper right')
     #ax.quiverkey(qp, 0.1, 0.9, 500., '500 m/s', transform=ax.transAxes)
     cax = fig.add_subplot(gs[:, 1])
     cbar = fig.colorbar(im_handle, cax=cax, orientation='vertical')
     cbar.set_label('Green Channel Intensity')
     cax = fig.add_subplot(gs[:, 2])
-    #cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
+    cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
     cbar.set_label(r'Electron Density (m$^{-3}$)')
     plt.tight_layout()
-    # Use provided output_path if given
+    # Save figure
     if output_path is None:
         frame = currentframe()
         args = frame.f_back.f_locals.get('args', None)
@@ -468,7 +506,7 @@ def main():
         if args.pretty:
             plot_pretty(skymaps, imgs, pfisr, output_path=output_path)
         else:
-            plot_fast(skymaps, imgs, pfisr, output_path=output_path)
+            plot_fast(skymaps, imgs, pfisr, output_path=output_path, map_time=args.time)
 
     tocall = time.time()
     print(f"Total run time: {tocall - ticall:.2f} s")
