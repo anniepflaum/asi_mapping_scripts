@@ -7,7 +7,7 @@ import requests
 import concurrent.futures
 
 
-def closest_amisr_png_url(site: str, date: str, time: str) -> str:
+def closest_amisr_png_url(site: str, date: str, time: str, color: str = "green") -> str:
     """
     Return the URL of the PNG image whose timestamp is closest to the requested
     (site, date, time), searching ONLY images within ±60 seconds of the requested HHMMSS.
@@ -16,10 +16,14 @@ def closest_amisr_png_url(site: str, date: str, time: str) -> str:
         site: "PKR", "VEE", "BVR", or "ARV"
         date: "YYYYMMDD"
         time: "HHMMSS"
+        color: "green" or "red" (PKR uses 0558 for green, 0630 for red)
     """
     site = site.upper().strip()
     if site not in {"PKR", "VEE", "BVR", "ARV"}:
         raise ValueError("site must be one of: PKR, VEE, BVR, ARV")
+    color = color.lower().strip()
+    if color not in {"green", "red"}:
+        raise ValueError("color must be one of: green, red")
 
     date = re.sub(r"\D", "", date)
     time = re.sub(r"\D", "", time)
@@ -39,7 +43,7 @@ def closest_amisr_png_url(site: str, date: str, time: str) -> str:
         except ValueError:
             return None
 
-    def _list_png_files(dir_url: str, target_dt: datetime, tol_seconds: int, site: str) -> list[str]:
+    def _list_png_files(dir_url: str, target_dt: datetime, tol_seconds: int, site: str, color: str) -> list[str]:
         """
         List PNG filenames in a directory listing, but ONLY those whose embedded
         timestamp is within ±tol_seconds of target_dt.
@@ -49,7 +53,8 @@ def closest_amisr_png_url(site: str, date: str, time: str) -> str:
         html = r.text
 
         if site == "PKR":
-            pat = r'href=["\'](PFRR_\d{8}_\d{6}_0558\.png)["\']'
+            suffix = "0558" if color == "green" else "0630"
+            pat = rf'href=["\'](PFRR_\d{{8}}_\d{{6}}_{suffix}\.png)["\']'
         else:
             pat = rf'href=["\']({site}_558_\d{{8}}_\d{{6}}\.png)["\']'
 
@@ -79,7 +84,7 @@ def closest_amisr_png_url(site: str, date: str, time: str) -> str:
         found_exact = None
         def fetch_and_check(durl):
             try:
-                files = _list_png_files(durl, target, tol_sec, site)
+                files = _list_png_files(durl, target, tol_sec, site, color)
             except Exception:
                 return []
             return [(f, durl) for f in files]
@@ -129,7 +134,10 @@ def closest_amisr_png_url(site: str, date: str, time: str) -> str:
         url = _pick_best_from_dir_specs(dir_urls)
         if url:
             return url
-        raise FileNotFoundError("No PKR PNGs found within ±15 seconds in the checked hour directories.")
+        suffix = "0558" if color == "green" else "0630"
+        raise FileNotFoundError(
+            f"No PKR {suffix} PNGs found within ±15 seconds in the checked hour directories."
+        )
 
     else:
         # VEE/BVR/ARV: ONLY check the requested date (no adjacent days).
@@ -144,14 +152,15 @@ def closest_amisr_png_url(site: str, date: str, time: str) -> str:
     
 def main():
     import sys
-    if len(sys.argv) != 4:
-        print("Usage: python fetch_url.py <site> <date: YYYYMMDD> <time: HHMMSS>")
+    if len(sys.argv) not in {4, 5}:
+        print("Usage: python fetch_url.py <site> <date: YYYYMMDD> <time: HHMMSS> [color: green|red]")
         sys.exit(1)
     site = sys.argv[1]
     date = sys.argv[2]
     time = sys.argv[3]
+    color = sys.argv[4] if len(sys.argv) == 5 else "green"
     try:
-        url = closest_amisr_png_url(site, date, time)
+        url = closest_amisr_png_url(site, date, time, color=color)
         print(f"Closest PNG URL: {url}")
     except Exception as e:
         print(f"Error: {e}")
