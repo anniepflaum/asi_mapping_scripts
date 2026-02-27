@@ -96,11 +96,12 @@ def load_PKR():
 def load_VEE():
 
     site_lon, site_lat = [-146.407,  67.013]
-    azdat = readsav('../starmaps/VEE/VEE_GASI_5577_20260210_RAW_FULL_Az.sav', python_dict=True)
-    eldat = readsav('../starmaps/VEE/VEE_GASI_5577_20260210_RAW_FULL_El.sav', python_dict=True)
+    azdat = readsav('../starmaps/VEE/VEE_GASI_20260210_050100_rot5_full_Az.sav', python_dict=True)
+    eldat = readsav('../starmaps/VEE/VEE_GASI_20260210_050100_rot5_full_El.sav', python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
     elmap = eldat[list(eldat.keys())[0]].copy()
 
+    '''
     # Super hacky fix to interpolation across the az=0 line
     # This is horrible code, do not repeat anywhere
     # resizing for new raw data skymap dimensions
@@ -131,6 +132,7 @@ def load_VEE():
     #import matplotlib.pyplot as plt
     #plt.imshow(azmap)
     #plt.show()
+    # '''
 
     mask = elmap<15.
 
@@ -142,8 +144,8 @@ def load_VEE():
 def load_BVR():
     site_lon, site_lat = [-147.4,    66.36]
 
-    azdat = readsav('../starmaps/BVR/BVR_GASI_5577_20260209_RAW_FULL_Az.sav', python_dict=True)
-    eldat = readsav('../starmaps/BVR/BVR_GASI_5577_20260209_RAW_FULL_El.sav', python_dict=True)
+    azdat = readsav('../starmaps/BVR/BVR_20260210_090000_750_rot5_Az.sav', python_dict=True)
+    eldat = readsav('../starmaps/BVR/BVR_20260210_090000_750_rot5_El.sav', python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
     elmap = eldat[list(eldat.keys())[0]].copy()
 
@@ -157,8 +159,8 @@ def load_ARV():
     site_lon, site_lat = [-145.533,  68.127]
     
 
-    azdat = readsav('../starmaps/ARV/ARV_GASI_5577_20260209_RAW_Full_Az.sav', python_dict=True)
-    eldat = readsav('../starmaps/ARV/ARV_GASI_5577_20260209_RAW_Full_El.sav', python_dict=True)
+    azdat = readsav('../starmaps/ARV/ARV_GASI_20260209_063700_rot5_full_Az.sav', python_dict=True)
+    eldat = readsav('../starmaps/ARV/ARV_GASI_20260209_063700_rot5_full_El.sav', python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
     elmap = eldat[list(eldat.keys())[0]].copy()
 
