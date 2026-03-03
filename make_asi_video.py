@@ -2,7 +2,7 @@
 """
 make_asi_video.py
 
-Generates a video of mapped ASI images for a given time range using map_asi_archive_restructure.py logic.
+Generates a video of mapped ASI images for a given time range using map_asi_archive.py logic.
 
 Usage:
     python make_asi_video.py --date 20260210 --start 100000 --end 102000 --step 60 [--pretty] [--output video.mp4]
@@ -64,11 +64,11 @@ def main():
         mode = "pretty" if args.pretty else "fast"
         outname = f"GNEISS_launch_{mode}_{sites_str}_{args.date}_{tstr}.png"
         outpath = os.path.join(png_dir, outname)
-        cmd = [sys.executable, "map_asi_archive_restructure.py",
+        cmd = [sys.executable, "map_asi_archive.py",
                 "--time", tstr, "--sites"] + args.sites
         if args.pretty:
             cmd.append("--pretty")
-        # Suppress output from map_asi_archive_restructure.py
+        # Suppress output from map_asi_archive.py
         with open(os.devnull, 'w') as devnull:
             subprocess.run(cmd, check=True, stdout=devnull, stderr=devnull)
         # Move the output PNG to png_dir
