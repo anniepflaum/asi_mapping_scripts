@@ -81,9 +81,10 @@ def normalize_lon(lon: np.ndarray, convention: str) -> np.ndarray:
 def load_PKR():
 
     site_lon, site_lat = [-147.43,   65.1192]
-    
-    azmap = np.rot90(fits.open('PKR_DASC_20220305_Az.FIT')[0].data,3).T
-    elmap = np.rot90(fits.open('PKR_DASC_20220305_El.FIT')[0].data,3).T
+    azdat = readsav('../starmaps/PKR/PKR_DASC_5577_20260210_RAW_FULL_Az.sav', python_dict=True)
+    eldat = readsav('../starmaps/PKR/PKR_DASC_5577_20260210_RAW_FULL_El.sav', python_dict=True)
+    azmap = azdat[list(azdat.keys())[0]].copy()
+    elmap = eldat[list(eldat.keys())[0]].copy()
 
     mask = elmap<15.
 
@@ -100,39 +101,6 @@ def load_VEE():
     eldat = readsav('../starmaps/VEE/VEE_GASI_20260210_050100_rot5_full_El.sav', python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
     elmap = eldat[list(eldat.keys())[0]].copy()
-
-    '''
-    # Super hacky fix to interpolation across the az=0 line
-    # This is horrible code, do not repeat anywhere
-    # resizing for new raw data skymap dimensions
-    orig_shape = 512
-    new_shape = 750
-    scale = new_shape / orig_shape
-
-    # Scale indices
-    ul = [int(88 * scale), int(109 * scale)]
-    lr = [int(247 * scale), int(288 * scale)]
-    i0, j0 = ul
-    i1, j1 = lr
-
-    ivec = np.arange(i1 - i0) + i0
-    m = (j1 - j0) / (i1 - i0)
-    jvec = m * (ivec - i0) + j0
-    jvec2 = jvec.astype(int) - int(4 * scale)
-    jvec3 = jvec.astype(int) + int(4 * scale)
-
-    for idx, i in enumerate(ivec):
-        fix_area = azmap[jvec2[idx]:jvec3[idx], i]
-        fix_area[(fix_area > 5.) & (fix_area < 355.)] = 0.
-        azmap[jvec2[idx]:jvec3[idx], i] = fix_area
-
-    #azmap = azmap-24.
-    #azmap[azmap<=0.] += 360.
-
-    #import matplotlib.pyplot as plt
-    #plt.imshow(azmap)
-    #plt.show()
-    # '''
 
     mask = elmap<15.
 

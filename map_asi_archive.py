@@ -7,11 +7,11 @@ Processes local multi-page TIFFs for ARV, VEE, BVR, and fetches PKR images from 
 Selects frames by timestamp, normalizes intensities, overlays rocket trajectories, and saves unified output.
 
 Usage:
-    python map_asi_archive.py --time HHMMSS --sites ARV BVR VEE PKR
+    python map_asi_archive_3Hz.py --time HHMMSS.s --sites ARV BVR VEE PKR
 
 Arguments:
     --date           Date for the ASI images (format: YYYYMMDD)
-    --time           Time for the ASI images (format: HHMMSS)
+    --time           Time for the ASI images (format: HHMMSS or HHMMSS.s)
     --sites          List of sites to process (default: all sites)
     --pretty         Use pretty Cartopy plotting (default: fast plotting)
 """
@@ -59,6 +59,52 @@ apex = Apex()
 
 FRAME_INTERVAL_SECONDS_GREEN = 0.3
 FRAME_INTERVAL_SECONDS_RED = 0.9
+TIME_WITH_OPTIONAL_FRACTION_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})(?:\.(\d{1,6}))?$")
+
+
+def parse_hhmmss_fractional(time_str):
+    """
+    Parse a time string in HHMMSS or HHMMSS.<fraction> format.
+    Returns (hour, minute, second, microsecond, frac_str_or_none).
+    """
+    m = TIME_WITH_OPTIONAL_FRACTION_RE.fullmatch(str(time_str).strip())
+    if not m:
+        raise ValueError("time must be HHMMSS or HHMMSS.s (up to 6 fractional digits)")
+    hour = int(m.group(1))
+    minute = int(m.group(2))
+    second = int(m.group(3))
+    if hour > 23 or minute > 59 or second > 59:
+        raise ValueError("time components out of range (HH: 00-23, MM/SS: 00-59)")
+    frac = m.group(4)
+    microsecond = int(frac.ljust(6, "0")) if frac else 0
+    return hour, minute, second, microsecond, frac
+
+
+def parse_date_and_time(date_str, time_str):
+    """Parse YYYYMMDD and HHMMSS(.fraction) into a datetime."""
+    if not re.fullmatch(r"\d{8}", str(date_str).strip()):
+        raise ValueError("date must be YYYYMMDD")
+    base_date = dt.datetime.strptime(date_str, "%Y%m%d")
+    hour, minute, second, microsecond, _ = parse_hhmmss_fractional(time_str)
+    return base_date.replace(hour=hour, minute=minute, second=second, microsecond=microsecond)
+
+
+def hhmmss_fractional_to_seconds(time_str):
+    """Convert HHMMSS(.fraction) to seconds since midnight as float."""
+    hour, minute, second, microsecond, _ = parse_hhmmss_fractional(time_str)
+    return hour * 3600.0 + minute * 60.0 + second + microsecond / 1e6
+
+
+def format_time_label(time_str):
+    """Format HHMMSS(.fraction) as HH:MM:SS(.fraction) for plot labels."""
+    hour, minute, second, _, frac = parse_hhmmss_fractional(time_str)
+    base = f"{hour:02d}:{minute:02d}:{second:02d}"
+    return f"{base}.{frac}" if frac else base
+
+
+def sanitize_time_for_filename(time_str):
+    """Return a filename-safe time token preserving fractional seconds."""
+    return str(time_str).replace(".", "p")
 
 
 def parse_tiff_start_datetime(tiff_path):
@@ -230,7 +276,7 @@ def load_traj(filename, map_time=None):
     Loads rocket trajectory from a text file.
     Maps lat/lon to 110 km altitude using Apex.
     Returns full trajectory, minute marks, apogee location, and optionally the trajectory point corresponding to map_time.
-    map_time: string in HHMMSS format (requested map time)
+    map_time: string in HHMMSS(.fraction) format (requested map time)
     """
     times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
     lats, lons, _ = apex.map_to_height(lats, lons, alts, 110.)
@@ -255,13 +301,8 @@ def load_traj(filename, map_time=None):
     traj_lon_at_map = None
     if map_time is not None and launch_start is not None:
         # Convert map_time and launch_start to seconds since midnight
-        def hms_to_sec(hms):
-            h = int(hms[:2])
-            m = int(hms[2:4])
-            s = int(hms[4:])
-            return h*3600 + m*60 + s
-        map_sec = hms_to_sec(map_time)
-        launch_sec = hms_to_sec(str(launch_start).zfill(6))
+        map_sec = hhmmss_fractional_to_seconds(map_time)
+        launch_sec = hhmmss_fractional_to_seconds(str(launch_start).zfill(6))
         rel_sec = map_sec - launch_sec
         # Find closest time in trajectory
         if rel_sec >= 0 and rel_sec <= times[-1]:
@@ -372,7 +413,7 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     if args is not None:
         date_str = args.date
         time_str = args.time
-        label_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {time_str[:2]}:{time_str[2:4]}:{time_str[4:]}"
+        label_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}"
     else:
         label_str = ""
     txt = ax.text(0.99, 0.01, label_str,
@@ -393,7 +434,7 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     # Save figure
     if output_path is None:
         if args is not None:
-            output_path = f"../mapped/GNEISS_launch_science_fast_{date_str}_{time_str}.png"
+            output_path = f"../mapped/GNEISS_launch_science_fast_{date_str}_{sanitize_time_for_filename(time_str)}.png"
         else:
             output_path = f"../mapped/GNEISS_launch_science_fast_{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S}.png"
     plt.savefig(output_path, dpi=150)
@@ -489,7 +530,7 @@ def plot_pretty(skymaps, imgs, pfisr, output_path=None, bounds=None, color="gree
         if args is not None:
             date_str = args.date
             time_str = args.time
-            output_path = f"../launch_science_pretty/GNEISS_launch_science_pretty_{date_str}_{time_str}.png"
+            output_path = f"../launch_science_pretty/GNEISS_launch_science_pretty_{date_str}_{sanitize_time_for_filename(time_str)}.png"
         else:
             output_path = f"../launch_science_pretty/GNEISS_launch_science_pretty_{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S}.png"
     plt.savefig(output_path, dpi=150)
@@ -507,7 +548,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pretty", action='store_true')  # Use pretty Cartopy plotting
     ap.add_argument("--date", required=False, type=str, default="20260210", help="Date for the ASI images (format: YYYYMMDD)")
-    ap.add_argument("--time", required=True, type=str, default=dt.datetime.now(dt.UTC).strftime("%H%M%S"), help="Time for the ASI images (format: HHMMSS)")
+    ap.add_argument("--time", required=True, type=str, default=dt.datetime.now(dt.UTC).strftime("%H%M%S"), help="Time for the ASI images (format: HHMMSS or HHMMSS.s)")
     ap.add_argument("--sites", nargs='*', default=['ARV', 'PKR', 'VEE', 'BVR'], help="List of sites to process (default: all sites)")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel for TIFF lookup and frame timing")
     ap.add_argument(
@@ -522,6 +563,10 @@ def main():
     ap.add_argument("--vee-tiffs", nargs='*', default=None, help="Optional VEE folder(s) containing TIFF tiles")
     ap.add_argument("--bvr-tiffs", nargs='*', default=None, help="Optional BVR folder(s) containing TIFF tiles")
     args = ap.parse_args()
+    try:
+        parse_hhmmss_fractional(args.time)
+    except ValueError as exc:
+        ap.error(f"--time {exc}")
     if args.bounds is not None:
         lon_min, lon_max, lat_min, lat_max = args.bounds
         if lon_min >= lon_max or lat_min >= lat_max:
@@ -544,7 +589,11 @@ def main():
     imgs = dict()  # Stores processed images for each site
     date = args.date
     time_str = args.time
-    target_dt = dt.datetime.strptime(date + time_str, "%Y%m%d%H%M%S")
+    try:
+        target_dt = parse_date_and_time(date, time_str)
+    except ValueError as exc:
+        ap.error(str(exc))
+    time_token = sanitize_time_for_filename(time_str)
 
     # --- Retrieve PFISR data for overlay ---
     pfisr = {}
@@ -578,7 +627,8 @@ def main():
     # --- Process PKR site: fetch image from web and store ---
     if 'PKR' in selected_sites:
         try:
-            url_pkr = closest_amisr_png_url('PKR', date, time_str, color=args.color)
+            pkr_lookup_time = target_dt.strftime("%H%M%S")
+            url_pkr = closest_amisr_png_url('PKR', date, pkr_lookup_time, color=args.color)
             imgs['PKR'] = retrieve_image(url_pkr)
         except Exception as e:
             print(f"Could not fetch PKR image: {e}")
@@ -587,7 +637,7 @@ def main():
     sites_str = '_'.join(sorted(selected_sites))
     mode_str = 'pretty' if args.pretty else 'fast'
     color = args.color
-    output_path = f"../mapped/{color}/GNEISS_launch_{color}_{sites_str}_{date}_{time_str}.png"
+    output_path = f"../mapped/{color}/GNEISS_launch_{color}_{sites_str}_{date}_{time_token}.png"
 
     # --- Run downstream plotting for all processed sites ---
     if imgs:
