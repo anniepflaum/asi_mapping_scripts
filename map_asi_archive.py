@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-map_asi_archive_restructure.py
+map_asi_archive.py
 
 Script for mapping and visualizing all-sky imager (ASI) data from multiple ground sites (ARV, VEE, BVR, PKR).
 Processes local multi-page TIFFs for ARV, VEE, BVR, and fetches PKR images from the web.
 Selects frames by timestamp, normalizes intensities, overlays rocket trajectories, and saves unified output.
 
 Usage:
-    python map_asi_archive_restructure.py --time HHMMSS --sites ARV BVR VEE PKR
+    python map_asi_archive.py --time HHMMSS --sites ARV BVR VEE PKR
 
 Arguments:
     --date           Date for the ASI images (format: YYYYMMDD)
@@ -164,12 +164,6 @@ def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval=FRAME
         im = tif.pages[best['idx']].asarray()
     if im.ndim == 3:
         im = im[:, :, 0]
-
-    # ARV red TIFFs are rotated 90 deg clockwise relative to the skymap; undo with CCW rotation.
-    '''
-    if site.upper() == "ARV" and str(color).lower() == "red":
-        im = np.rot90(im, -1)
-    '''
 
     vmin = np.percentile(im, 1)
     vmax = np.percentile(im, 99)
@@ -389,9 +383,11 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     cax = fig.add_subplot(gs[:, 1])
     cbar = fig.colorbar(im_handle, cax=cax, orientation='vertical')
     cbar.set_label('Green Channel Intensity')
+    '''
     cax = fig.add_subplot(gs[:, 2])
-    #cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
+    cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
     cbar.set_label(r'Electron Density (m$^{-3}$)')
+    '''
     plt.tight_layout()
     # Save figure
     if output_path is None:
