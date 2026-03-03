@@ -171,7 +171,7 @@ def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval=FRAME
     im_boost = np.clip((im - vmin) / denom, 0, 1)
     return im_boost.astype(np.float32)
 
-def load_skymaps(selected_sites=None):
+def load_skymaps(selected_sites=None, color="green"):
     """
     Loads latitude and longitude mapping arrays for each site using skymap module.
     Returns a dictionary of skymaps for each site, including azimuth/elevation and masks.
@@ -191,8 +191,9 @@ def load_skymaps(selected_sites=None):
     if 'PKR' in selected_sites:
         lat, lon, az, el, mask = skymap.load_PKR()
         skymaps['PKR'] = {'site_lat': lat, 'site_lon': lon, 'azmt': az, 'elev': el, 'mask': mask}
+    map_alt_km = 200.0 if str(color).lower() == "red" else 110.0
     for sm in skymaps.values():
-        lat, lon = skymap.azel2geo(sm['site_lat'], sm['site_lon'], sm['azmt'], sm['elev'], alt=110.)
+        lat, lon = skymap.azel2geo(sm['site_lat'], sm['site_lon'], sm['azmt'], sm['elev'], alt=map_alt_km)
         sm['lat'] = lat
         sm['lon'] = lon
     return skymaps
@@ -528,7 +529,7 @@ def main():
 
     # --- Load geographic mapping for each ASI site ---
     selected_sites = set([s.upper() for s in args.sites])
-    skymaps = load_skymaps(selected_sites)
+    skymaps = load_skymaps(selected_sites, color=args.color)
 
     # --- Calculate masks for overlapping images between sites ---
     sites = list(skymaps.keys())
