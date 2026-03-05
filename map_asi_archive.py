@@ -59,6 +59,7 @@ apex = Apex()
 
 FRAME_INTERVAL_SECONDS_GREEN = 0.3
 FRAME_INTERVAL_SECONDS_RED = 0.9
+REFERENCE_NORMALIZATION_TIME = "102400.0"
 TIME_WITH_OPTIONAL_FRACTION_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})(?:\.(\d{1,6}))?$")
 
 
@@ -154,11 +155,11 @@ def get_site_tiff_candidates(site, date_str, color, override_dirs=None):
     return unique_paths
 
 
-def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval=FRAME_INTERVAL_SECONDS_GREEN, color="green"):
+def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval=FRAME_INTERVAL_SECONDS_GREEN, color="green", verbose=True):
     """
     Search all candidate TIFF tiles and load the frame closest to target_dt.
     Prefer TIFFs whose coverage includes target_dt; if none do, use nearest boundary frame.
-    Returns normalized float32 image in [0, 1].
+    Returns (raw_image, normalized_image), both float32 arrays.
     """
     if not tiff_paths:
         raise FileNotFoundError(f"No TIFF files found for {site}")
@@ -195,27 +196,142 @@ def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval=FRAME
         best = min(in_range_candidates, key=lambda c: c['delta_s'])
     else:
         best = min(candidates, key=lambda c: c['delta_s'])
-        print(
-            f"{site}: requested time outside all tile ranges; "
-            f"using nearest boundary frame."
-        )
+        if verbose:
+            print(
+                f"{site}: requested time outside all tile ranges; "
+                f"using nearest boundary frame."
+            )
 
-    print(
-        f"{site}: {os.path.basename(best['path'])} frame "
-        f"{best['idx'] + 1}/{best['n_frames']} "
-        f"(delta {best['delta_s']:.2f}s)"
-    )
+    if verbose:
+        print(
+            f"{site}: {os.path.basename(best['path'])} frame "
+            f"{best['idx'] + 1}/{best['n_frames']} "
+            f"(delta {best['delta_s']:.2f}s)"
+        )
 
     with tifffile.TiffFile(best['path']) as tif:
         im = tif.pages[best['idx']].asarray()
     if im.ndim == 3:
         im = im[:, :, 0]
+    im_raw = im.astype(np.float32)
 
-    vmin = np.percentile(im, 1)
-    vmax = np.percentile(im, 99)
-    denom = max(vmax - vmin, 1e-6)
-    im_boost = np.clip((im - vmin) / denom, 0, 1)
-    return im_boost.astype(np.float32)
+    # Display normalization is applied globally across sites in plot_fast().
+    im_boost = im_raw.copy()
+    return im_raw, im_boost.astype(np.float32)
+
+
+def sample_raw_brightness_at_latlon(site, lat0, lon0, skymaps, imgs_raw):
+    """
+    Sample raw image brightness at (lat0, lon0) using the mean of the 10
+    closest valid pixels for a site.
+    Returns dict with brightness, percentile, and nearest-pixel metadata, or None if unavailable.
+    """
+    if site not in skymaps or site not in imgs_raw:
+        return None
+    lat_grid = skymaps[site]['lat']
+    lon_grid = skymaps[site]['lon']
+    raw_img = imgs_raw[site]
+    valid = (~skymaps[site]['mask']) & np.isfinite(lat_grid) & np.isfinite(lon_grid) & np.isfinite(raw_img)
+    for m in skymaps[site].get('extra_masks', {}).values():
+        valid &= ~m
+    if not np.any(valid):
+        return None
+    d2 = (lat_grid - lat0) ** 2 + (lon_grid - lon0) ** 2
+    valid_flat = valid.ravel()
+    d2_flat = d2.ravel()
+    valid_idx = np.flatnonzero(valid_flat)
+    if valid_idx.size == 0:
+        return None
+    k = min(25, valid_idx.size)
+    nearest_order = np.argpartition(d2_flat[valid_idx], k - 1)[:k]
+    nearest_idx = valid_idx[nearest_order]
+    nearest_d2 = d2_flat[nearest_idx]
+    raw_flat = raw_img.ravel()
+    raw_val = float(np.mean(raw_flat[nearest_idx]))
+    valid_vals = raw_img[valid]
+    # Percentile rank within valid mapped pixels for this site.
+    percentile = 100.0 * float(np.mean(valid_vals <= raw_val))
+    closest_idx = int(nearest_idx[np.argmin(nearest_d2)])
+    rr, cc = np.unravel_index(closest_idx, d2.shape)
+    return {
+        'site': site,
+        'raw_brightness': raw_val,
+        'percentile': percentile,
+        'distance_deg': float(np.mean(np.sqrt(nearest_d2))),
+        'n_pixels': int(k),
+        'row': int(rr),
+        'col': int(cc),
+    }
+
+
+def best_rocket_brightness(lat0, lon0, skymaps, imgs_raw):
+    """
+    Return nearest-pixel raw brightness info across all available sites for a rocket location.
+    """
+    samples = []
+    for site in imgs_raw.keys():
+        s = sample_raw_brightness_at_latlon(site, lat0, lon0, skymaps, imgs_raw)
+        if s is not None:
+            samples.append(s)
+    if not samples:
+        return None
+    return min(samples, key=lambda x: x['distance_deg'])
+
+
+def compute_reference_norm_limits(skymaps, selected_sites, date, ref_time_str, color, frame_interval, tiff_overrides):
+    """
+    Compute shared normalization limits from a fixed reference time using
+    post-mask main-map pixels across currently selected sites.
+    """
+    ref_dt = parse_date_and_time(date, ref_time_str)
+    ref_imgs = {}
+    for site in ['ARV', 'VEE', 'BVR']:
+        if site not in selected_sites:
+            continue
+        try:
+            tiff_candidates = get_site_tiff_candidates(site, date, color, tiff_overrides[site])
+            im_raw, _im_display = load_best_frame_from_tiffs(
+                site,
+                tiff_candidates,
+                ref_dt,
+                frame_interval=frame_interval,
+                color=color,
+                verbose=False,
+            )
+            ref_imgs[site] = im_raw
+        except Exception as exc:
+            print(f"{site}: reference normalization frame unavailable at {ref_time_str}: {exc}")
+    if 'PKR' in selected_sites:
+        try:
+            pkr_lookup_time = ref_dt.strftime("%H%M%S")
+            url_pkr = closest_amisr_png_url('PKR', date, pkr_lookup_time, color=color)
+            ref_imgs['PKR'] = retrieve_image(url_pkr)
+        except Exception as exc:
+            print(f"PKR: reference normalization frame unavailable at {ref_time_str}: {exc}")
+
+    norm_pool = []
+    for site, img in ref_imgs.items():
+        side_img = img.copy()
+        side_img[skymaps[site]['mask']] = np.nan
+        main_img = side_img.copy()
+        for m in skymaps[site]['extra_masks'].values():
+            main_img[m] = np.nan
+        vals = main_img[np.isfinite(main_img)]
+        if vals.size > 0:
+            norm_pool.append(vals)
+
+    if not norm_pool:
+        print(f"Reference normalization at {ref_time_str} found no valid pixels; falling back to per-frame normalization.")
+        return None, None
+
+    all_vals = np.concatenate(norm_pool)
+    vmin = float(np.percentile(all_vals, 1))
+    vmax = float(np.percentile(all_vals, 99))
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
+        vmin = float(np.nanmin(all_vals))
+        vmax = float(np.nanmax(all_vals))
+    print(f"Normalization fixed to {ref_time_str}: vmin={vmin:.2f}, vmax={vmax:.2f}")
+    return vmin, vmax
 
 def load_skymaps(selected_sites=None, color="green"):
     """
@@ -359,7 +475,7 @@ def retrieve_pfisr():
 # --- PLOTTING FUNCTIONS ---
 ###############################################################
 
-def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green"):
+def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None):
     """
     Fast plotting mode: overlays ASI images, PFISR data, and rocket trajectories on a simple map.
     Used for quick visualization without Cartopy.
@@ -387,14 +503,57 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
         ax1[site].set_aspect(2.2)
         ax1[site].grid()
         ax1[site].set_title(site)
-    # Plot each site's mapped image
+    # Build masked images first, then normalize once across all sites.
+    side_images = {}
+    main_images = {}
+    norm_pool = []
     for site, img in imgs.items():
-        img[skymaps[site]['mask']] = np.nan
-        im = img.copy()
+        side_img = img.copy()
+        side_img[skymaps[site]['mask']] = np.nan
+        main_img = side_img.copy()
         for m in skymaps[site]['extra_masks'].values():
-            im[m] = np.nan
-        im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], im)
-        ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], img)
+            main_img[m] = np.nan
+        side_images[site] = side_img
+        main_images[site] = main_img
+        vals = main_img[np.isfinite(main_img)]
+        if vals.size > 0:
+            norm_pool.append(vals)
+
+    if norm_limits is not None and norm_limits[0] is not None and norm_limits[1] is not None:
+        global_vmin, global_vmax = norm_limits
+    else:
+        global_vmin = None
+        global_vmax = None
+        if norm_pool:
+            all_vals = np.concatenate(norm_pool)
+            global_vmin = float(np.percentile(all_vals, 1))
+            global_vmax = float(np.percentile(all_vals, 99))
+            if not np.isfinite(global_vmin) or not np.isfinite(global_vmax) or global_vmax <= global_vmin:
+                global_vmin = float(np.nanmin(all_vals))
+                global_vmax = float(np.nanmax(all_vals))
+
+    # Plot each site's mapped image with one shared normalization.
+    for site in imgs.keys():
+        main_img = main_images[site]
+        side_img = side_images[site]
+        if global_vmin is None or global_vmax is None:
+            im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], main_img)
+            ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], side_img)
+        else:
+            im_handle = ax.pcolor(
+                skymaps[site]['lon'],
+                skymaps[site]['lat'],
+                main_img,
+                vmin=global_vmin,
+                vmax=global_vmax,
+            )
+            ax1[site].pcolor(
+                skymaps[site]['lon'],
+                skymaps[site]['lat'],
+                side_img,
+                vmin=global_vmin,
+                vmax=global_vmax,
+            )
     # Plot rocket trajectories and minute marks
     lat1, lon1, latm1, lonm1, lata1, lona1, lat_map1, lon_map1 = load_traj('Traj_Left.txt', map_time=map_time)
     lat2, lon2, latm2, lonm2, lata2, lona2, lat_map2, lon_map2 = load_traj('Traj_Right.txt', map_time=map_time)
@@ -407,6 +566,24 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
         ax.scatter(lon_map1, lat_map1, color='orange', s=50, marker='o', zorder=8, label='Position at map time')
     if lat_map2 is not None and lon_map2 is not None:
         ax.scatter(lon_map2, lat_map2, color='orange', s=50, marker='o', zorder=8)
+    # Raw auroral brightness at rocket positions (nearest valid mapped pixel)
+    bright1 = None
+    bright2 = None
+    if imgs_raw is not None:
+        if lat_map1 is not None and lon_map1 is not None:
+            bright1 = best_rocket_brightness(lat_map1, lon_map1, skymaps, imgs_raw)
+        if lat_map2 is not None and lon_map2 is not None:
+            bright2 = best_rocket_brightness(lat_map2, lon_map2, skymaps, imgs_raw)
+        if bright1 is not None:
+            print(
+                f"Rocket Left brightness percentile: {bright1['site']} P={bright1['percentile']:.1f} "
+                f"(nearest {bright1['distance_deg']:.3f} deg)"
+            )
+        if bright2 is not None:
+            print(
+                f"Rocket Right brightness percentile: {bright2['site']} P={bright2['percentile']:.1f} "
+                f"(nearest {bright2['distance_deg']:.3f} deg)"
+            )
     # Add plot text for date/time
     frame = currentframe()
     args = frame.f_back.f_locals.get('args', None)
@@ -425,6 +602,46 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     cax = fig.add_subplot(gs[:, 1])
     cbar = fig.colorbar(im_handle, cax=cax, orientation='vertical')
     cbar.set_label('Green Channel Intensity')
+    # Place rocket brightness markers on the colorbar at percentile positions.
+    marker_specs = []
+    if bright1 is not None:
+        marker_specs.append(("L", bright1, "orange"))
+    if bright2 is not None:
+        marker_specs.append(("R", bright2, "gold"))
+    for tag, b, color_marker in marker_specs:
+        y = np.clip(b['percentile'] / 100.0, 0.0, 1.0)
+        # Draw in colorbar-axes coordinates so marker is guaranteed on top of the bar.
+        cbar.ax.plot(
+            [0.0, 1.0],
+            [y, y],
+            transform=cbar.ax.transAxes,
+            color='black',
+            linewidth=4.0,
+            zorder=1000,
+            solid_capstyle='butt',
+            clip_on=False,
+        )
+        cbar.ax.plot(
+            [0.0, 1.0],
+            [y, y],
+            transform=cbar.ax.transAxes,
+            color='white',
+            linewidth=2.2,
+            zorder=1001,
+            solid_capstyle='butt',
+            clip_on=False,
+        )
+        cbar.ax.text(
+            -0.05,
+            y,
+            f"{tag}: {b['site']} P{b['percentile']:.1f}",
+            transform=cbar.ax.transAxes,
+            color='black',
+            fontsize=8,
+            va='center',
+            ha='right',
+            clip_on=False,
+        )
     '''
     cax = fig.add_subplot(gs[:, 2])
     cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
@@ -586,7 +803,8 @@ def main():
             m0, m1 = ci.calculate_masks(skymaps[s0]['site_lat'], skymaps[s0]['site_lon'], skymaps[s0]['azmt'], skymaps[s0]['elev'], skymaps[s1]['site_lat'], skymaps[s1]['site_lon'], skymaps[s1]['azmt'], skymaps[s1]['elev'])
             skymaps[s0]['extra_masks'][s1] = m0
 
-    imgs = dict()  # Stores processed images for each site
+    imgs = dict()  # Stores normalized display images for each site
+    imgs_raw = dict()  # Stores raw image values for brightness sampling
     date = args.date
     time_str = args.time
     try:
@@ -610,18 +828,29 @@ def main():
         'VEE': args.vee_tiffs,
         'BVR': args.bvr_tiffs,
     }
+    fixed_norm_limits = compute_reference_norm_limits(
+        skymaps,
+        selected_sites,
+        date,
+        REFERENCE_NORMALIZATION_TIME,
+        args.color,
+        frame_interval,
+        tiff_overrides,
+    )
     for site in ['ARV', 'VEE', 'BVR']:
         if site not in selected_sites:
             continue
         try:
             tiff_candidates = get_site_tiff_candidates(site, date, args.color, tiff_overrides[site])
-            imgs[site] = load_best_frame_from_tiffs(
+            im_raw, _im_display = load_best_frame_from_tiffs(
                 site,
                 tiff_candidates,
                 target_dt,
                 frame_interval=frame_interval,
                 color=args.color,
             )
+            imgs_raw[site] = im_raw
+            imgs[site] = im_raw
         except Exception as e:
             print(f"Could not load {site} TIFF image: {e}")
     # --- Process PKR site: fetch image from web and store ---
@@ -629,7 +858,9 @@ def main():
         try:
             pkr_lookup_time = target_dt.strftime("%H%M%S")
             url_pkr = closest_amisr_png_url('PKR', date, pkr_lookup_time, color=args.color)
-            imgs['PKR'] = retrieve_image(url_pkr)
+            pkr_img = retrieve_image(url_pkr)
+            imgs_raw['PKR'] = pkr_img
+            imgs['PKR'] = pkr_img
         except Exception as e:
             print(f"Could not fetch PKR image: {e}")
 
@@ -644,7 +875,17 @@ def main():
         if args.pretty:
             plot_pretty(skymaps, imgs, pfisr, output_path=output_path, bounds=args.bounds, color=args.color)
         else:
-            plot_fast(skymaps, imgs, pfisr, output_path=output_path, map_time=args.time, bounds=args.bounds, color=args.color)
+            plot_fast(
+                skymaps,
+                imgs,
+                pfisr,
+                output_path=output_path,
+                map_time=args.time,
+                bounds=args.bounds,
+                color=args.color,
+                imgs_raw=imgs_raw,
+                norm_limits=fixed_norm_limits,
+            )
 
     tocall = time.time()
     print(f"Total run time: {tocall - ticall:.2f} s")
