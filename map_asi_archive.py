@@ -475,35 +475,67 @@ def retrieve_pfisr():
 # --- PLOTTING FUNCTIONS ---
 ###############################################################
 
-def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None):
+def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, pretty=False):
     """
     Fast plotting mode: overlays ASI images, PFISR data, and rocket trajectories on a simple map.
     Used for quick visualization without Cartopy.
     """
-    # Load coastline data
-    coastlons = np.loadtxt('coastlon.txt')
-    coastlats = np.loadtxt('coastlat.txt')
-    # Create figure and main axis
+
     fig = plt.figure(figsize=(15, 10))
     gs = gridspec.GridSpec(4, 4, width_ratios=[4, 0.2, 0.2, 1])
-    ax = fig.add_subplot(gs[:, 0])
-    ax.plot(coastlons, coastlats, color='black')
-    lon_min, lon_max, lat_min, lat_max = bounds if bounds is not None else (-170, -135, 57.5, 72)
-    ax.set_ylim(ymin=lat_min, ymax=lat_max)
-    ax.set_xlim(xmin=lon_min, xmax=lon_max)
-    ax.set_aspect(2.2)
-    ax.grid()
+
+    if pretty:
+        proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
+        ax = fig.add_subplot(gs[:,0], projection=proj)
+        ax.add_feature(cfeature.LAND.with_scale("50m"), zorder=0)
+        ax.add_feature(cfeature.OCEAN.with_scale("50m"), zorder=0)
+        ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.8, zorder=2)
+        ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.5, zorder=2)
+        ax.set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
+        ax.gridlines()
+        mgl = mcm.maggridlines(ax, apex=apex, apex_height=110.)
+        axtrans = ccrs.PlateCarree()
+    else:
+        ax = fig.add_subplot(gs[:,0])
+        coastlons = np.loadtxt('coastlon.txt')
+        coastlats = np.loadtxt('coastlat.txt')
+        ax.plot(coastlons,coastlats, color='black')#,s=15) 
+        lon_min, lon_max, lat_min, lat_max = bounds if bounds is not None else (-170, -135, 57.5, 72)
+        ax.set_ylim(ymin=lat_min, ymax=lat_max)
+        ax.set_xlim(xmin=lon_min, xmax=lon_max)
+        ax.set_aspect(2.2)
+        ax.grid()
+        axtrans = ax.transData
+
+
     # Create sidebar axes for each site
     ax1 = dict()
+    axtrans1 = dict()
     for i, site in enumerate(imgs.keys()):
-        ax1[site] = fig.add_subplot(gs[i, -1])
-        ax1[site].plot(coastlons, coastlats, color='black')
-        ax1[site].set_ylim(ymin=lat_min, ymax=lat_max)
-        ax1[site].set_xlim(xmin=lon_min, xmax=lon_max)
-        ax1[site].set_aspect(2.2)
-        ax1[site].grid()
-        ax1[site].set_title(site)
-    # Build masked images first, then normalize once across all sites.
+        if pretty:
+            # PRETTY
+            ax1[site] = fig.add_subplot(gs[i,-1], projection=proj)
+            ax1[site].add_feature(cfeature.LAND.with_scale("50m"), zorder=0)
+            ax1[site].add_feature(cfeature.OCEAN.with_scale("50m"), zorder=0)
+            ax1[site].add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.8, zorder=2)
+            ax1[site].add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.5, zorder=2)
+            ax1[site].set_extent([-170, -140, 57, 72], crs=ccrs.PlateCarree())
+            ax1[site].gridlines()
+            mgl = mcm.maggridlines(ax, apex=apex, apex_height=110.)
+            axtrans1[site] = ccrs.PlateCarree()
+        else:
+            # FAST
+            ax1[site] = fig.add_subplot(gs[i,-1])
+            ax1[site].plot(coastlons, coastlats, color='black')#,s=15) 
+            ax1[site].set_ylim(ymin=lat_min, ymax=lat_max)
+            ax1[site].set_xlim(xmin=lon_min, xmax=lon_max)
+            ax1[site].set_aspect(2.2)
+            ax1[site].grid()
+            ax1[site].set_title(site)
+            axtrans1[site] = ax1[site].transData
+
+
+
     side_images = {}
     main_images = {}
     norm_pool = []
@@ -537,8 +569,8 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
         main_img = main_images[site]
         side_img = side_images[site]
         if global_vmin is None or global_vmax is None:
-            im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], main_img)
-            ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], side_img)
+            im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], main_img, transform=axtrans)
+            ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], side_img, transform=axtrans1[site])
         else:
             im_handle = ax.pcolor(
                 skymaps[site]['lon'],
@@ -546,6 +578,7 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
                 main_img,
                 vmin=global_vmin,
                 vmax=global_vmax,
+                transform=axtrans,
             )
             ax1[site].pcolor(
                 skymaps[site]['lon'],
@@ -553,6 +586,7 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
                 side_img,
                 vmin=global_vmin,
                 vmax=global_vmax,
+                transform=axtrans1[site],
             )
     # Plot rocket trajectories and minute marks
     lat1, lon1, latm1, lonm1, lata1, lona1, lat_map1, lon_map1 = load_traj('Traj_Left.txt', map_time=map_time)
@@ -563,9 +597,9 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     ax.scatter(lonm2, latm2, color='red', s=15, zorder=7)
     # Mark position at map time if available
     if lat_map1 is not None and lon_map1 is not None:
-        ax.scatter(lon_map1, lat_map1, color='orange', s=50, marker='o', zorder=8, label='Position at map time')
+        ax.scatter(lon_map1, lat_map1, color='orange', s=50, marker='o', zorder=8, label='Position at map time', transform=axtrans)
     if lat_map2 is not None and lon_map2 is not None:
-        ax.scatter(lon_map2, lat_map2, color='orange', s=50, marker='o', zorder=8)
+        ax.scatter(lon_map2, lat_map2, color='orange', s=50, marker='o', zorder=8, transform=axtrans)
     # Raw auroral brightness at rocket positions (nearest valid mapped pixel)
     bright1 = None
     bright2 = None
@@ -658,101 +692,6 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     print(f"Saved mapped image to {output_path}")
     # plt.show()
 
-
-def plot_pretty(skymaps, imgs, pfisr, output_path=None, bounds=None, color="green"):
-    """
-    Pretty plotting mode: overlays ASI images, PFISR data, and rocket trajectories on a Cartopy map.
-    Used for publication-quality visualization.
-    """
-    # Set up Cartopy projection
-    proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
-    fig = plt.figure(figsize=(15, 10))
-    gs = gridspec.GridSpec(4, 4, width_ratios=[4, 0.2, 0.2, 1])
-    # Main map axis
-    ax = fig.add_subplot(gs[:, 0], projection=proj)
-    lon_min, lon_max, lat_min, lat_max = bounds if bounds is not None else (-170, -140, 57, 72)
-    ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
-    ax.add_feature(cfeature.LAND.with_scale("50m"), zorder=0)
-    ax.add_feature(cfeature.OCEAN.with_scale("50m"), zorder=0)
-    ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.8, zorder=2)
-    ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.5, zorder=2)
-    ax.gridlines()
-    # Add magnetic grid lines
-    mcm.maggridlines(ax, apex=apex, apex_height=110.)
-    # Sidebar axes for each site
-    ax1 = dict()
-    for i, site in enumerate(imgs.keys()):
-        ax1[site] = fig.add_subplot(gs[i, -1], projection=proj)
-        ax1[site].coastlines()
-        ax1[site].gridlines()
-        mcm.maggridlines(ax1[site], apex=apex, apex_height=110.)
-        ax1[site].set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
-        ax1[site].set_title(site)
-    # Plot each site's mapped image
-    for site, img in imgs.items():
-        img[skymaps[site]['mask']] = np.nan
-        im = img.copy()
-        lat = skymaps[site]['lat'].copy()
-        lon = skymaps[site]['lon'].copy()
-        for m in skymaps[site]['extra_masks'].values():
-            im[m] = np.nan
-        img_flat = img[~skymaps[site]['mask']].flatten()
-        lon_flat = skymaps[site]['lon'][~skymaps[site]['mask']].flatten()
-        lat_flat = skymaps[site]['lat'][~skymaps[site]['mask']].flatten()
-        im_handle = ax1[site].tripcolor(lon_flat, lat_flat, img_flat, zorder=3, transform=ccrs.PlateCarree())
-        imf = im[np.isfinite(im)].flatten()
-        latf = lat[np.isfinite(im)].flatten()
-        lonf = lon[np.isfinite(im)].flatten()
-        ax.tripcolor(lonf, latf, imf, transform=ccrs.PlateCarree())
-    # Plot PFISR data
-    '''
-    print('PFISR')
-    pfisr_handle = ax.scatter(pfisr['glon'], pfisr['glat'], c=pfisr['ne'], zorder=6, cmap='jet', transform=ccrs.Geodetic())
-    u, v = scale_uv(pfisr['vlon'], pfisr['vlat'], pfisr['vel'][:, 0], pfisr['vel'][:, 1], vmin=0, vmax=4e11)
-    qp = ax.quiver(pfisr['vlon'], pfisr['vlat'], u, v, zorder=7, scale=5000, width=0.005, transform=ccrs.PlateCarree())
-    '''
-    # Plot rocket trajectories and minute marks
-    print('Trajectory')
-    lat1, lon1, latm1, lonm1, lata1, lona1, lat_map1, lon_map1 = load_traj('Traj_Left.txt')
-    lat2, lon2, latm2, lonm2, lata2, lona2, lat_map2, lon_map2 = load_traj('Traj_Right.txt')
-    ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=7)
-    ax.scatter(lonm1, latm1, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
-    ax.plot(lon2, lat2, color='red', transform=ccrs.PlateCarree(), zorder=7)
-    ax.scatter(lonm2, latm2, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
-    # Mark position at map time if available
-    if lat_map1 is not None and lon_map1 is not None:
-        ax.scatter(lon_map1, lat_map1, color='orange', s=50, marker='o', zorder=8, label='Position at map time')
-    if lat_map2 is not None and lon_map2 is not None:
-        ax.scatter(lon_map2, lat_map2, color='orange', s=50, marker='o', zorder=8)
-    # Add plot text for date/time
-    txt = ax.text(0.99, 0.01, dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S"),
-                 transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom',
-                 bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
-    ax.set_title(f"Mapped ASIs and GNEISS trajectory ({color} channel)")
-    ax.legend(loc='upper right')
-    #ax.quiverkey(qp, 0.1, 0.9, 500., '500 m/s', transform=ax.transAxes)
-    cax = fig.add_subplot(gs[:, 1])
-    cbar = fig.colorbar(im_handle, cax=cax, orientation='vertical')
-    cbar.set_label('Green Channel Intensity')
-    '''
-    cax = fig.add_subplot(gs[:, 2])
-    cbar = fig.colorbar(pfisr_handle, cax=cax, orientation='vertical')
-    cbar.set_label(r'Electron Density (m$^{-3}$)')
-    '''
-    plt.tight_layout()
-    # Save figure
-    if output_path is None:
-        frame = currentframe()
-        args = frame.f_back.f_locals.get('args', None)
-        if args is not None:
-            date_str = args.date
-            time_str = args.time
-            output_path = f"../launch_science_pretty/GNEISS_launch_science_pretty_{date_str}_{sanitize_time_for_filename(time_str)}.png"
-        else:
-            output_path = f"../launch_science_pretty/GNEISS_launch_science_pretty_{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S}.png"
-    plt.savefig(output_path, dpi=150)
-    print(f"Saved mapped image to {output_path}")
-    # plt.show()
 
 
 def main():
@@ -872,20 +811,18 @@ def main():
 
     # --- Run downstream plotting for all processed sites ---
     if imgs:
-        if args.pretty:
-            plot_pretty(skymaps, imgs, pfisr, output_path=output_path, bounds=args.bounds, color=args.color)
-        else:
-            plot_fast(
-                skymaps,
-                imgs,
-                pfisr,
-                output_path=output_path,
-                map_time=args.time,
-                bounds=args.bounds,
-                color=args.color,
-                imgs_raw=imgs_raw,
-                norm_limits=fixed_norm_limits,
-            )
+        plot_map(
+            skymaps,
+            imgs,
+            pfisr,
+            output_path=output_path,
+            map_time=args.time,
+            bounds=args.bounds,
+            color=args.color,
+            imgs_raw=imgs_raw,
+            norm_limits=fixed_norm_limits,
+            pretty=args.pretty
+        )
 
     tocall = time.time()
     print(f"Total run time: {tocall - ticall:.2f} s")
