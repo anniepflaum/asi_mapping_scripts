@@ -42,6 +42,7 @@ import generate_skymap as skymap
 import tifffile
 import json
 import re
+import csv
 from glob import glob
 from inspect import currentframe
 from fetch_url import closest_amisr_png_url
@@ -222,7 +223,7 @@ def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval=FRAME
 
 def sample_raw_brightness_at_latlon(site, lat0, lon0, skymaps, imgs_raw):
     """
-    Sample raw image brightness at (lat0, lon0) using the mean of the 10
+    Sample raw image brightness at (lat0, lon0) using the mean of the 25
     closest valid pixels for a site.
     Returns dict with brightness, percentile, and nearest-pixel metadata, or None if unavailable.
     """
@@ -389,28 +390,70 @@ def retrieve_image(url):
 
 def load_traj(filename, map_time=None):
     """
-    Loads rocket trajectory from a text file.
+    Loads rocket trajectory from an NSROC attitude-solution CSV.
     Maps lat/lon to 110 km altitude using Apex.
     Returns full trajectory, minute marks, apogee location, and optionally the trajectory point corresponding to map_time.
     map_time: string in HHMMSS(.fraction) format (requested map time)
     """
-    times, lats, lons, alts = np.loadtxt(filename, skiprows=1, unpack=True)
+    filename_lower = filename.lower()
+    launch_start = None
+    if not filename_lower.endswith(".csv"):
+        raise ValueError(f"Trajectory input must be an NSROC attitude-solution CSV: {filename}")
+
+    t0_re = re.compile(r"^T0:\s*(\d{2})/(\d{2})/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?\s+UTC$")
+    with open(filename, "r", encoding="utf-8") as fd:
+        lines = fd.readlines()
+
+    for line in lines:
+        stripped = line.strip()
+        match = t0_re.match(stripped)
+        if match:
+            launch_start = f"{match.group(4)}{match.group(5)}{match.group(6)}"
+            if match.group(7):
+                launch_start = f"{launch_start}.{match.group(7)}"
+            print(f"launch_start: {launch_start}")
+            break
+
+    header_idx = None
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("Time,") and "Latgd" in stripped and "Long" in stripped and "Alt" in stripped:
+            header_idx = idx
+            break
+    if header_idx is None:
+        raise ValueError(f"Could not find trajectory header in {filename}")
+
+    reader = csv.reader(lines[header_idx:])
+    header = next(reader, None)
+    next(reader, None)  # units row
+    if header is None:
+        raise ValueError(f"Could not read trajectory header in {filename}")
+    columns = [column.strip() for column in header]
+
+    rows = []
+    for values in reader:
+        if not values or not any(value.strip() for value in values):
+            continue
+        row = {column: value.strip() for column, value in zip(columns, values)}
+        if not row.get("Time"):
+            continue
+        rows.append(row)
+    if not rows:
+        raise ValueError(f"No trajectory samples found in {filename}")
+
+    times = np.array([float(row["Time"]) for row in rows], dtype=float)
+    lats = np.array([float(row["Latgd"]) for row in rows], dtype=float)
+    lons = np.array([float(row["Long"]) for row in rows], dtype=float)
+    alts = np.array([float(row["Alt"]) for row in rows], dtype=float) / 1000.0
+
     lats, lons, _ = apex.map_to_height(lats, lons, alts, 110.)
-    idx = np.argwhere(times % 60 == 0)
+    idx = np.argwhere(np.isclose(times % 60, 0.0, atol=0.05))
     timem = times[idx].squeeze()
     latsm = lats[idx].squeeze()
     lonsm = lons[idx].squeeze()
     aidx = np.argmax(alts)
     lata = lats[aidx]
     lona = lons[aidx]
-
-    # Determine launch start time based on filename
-    if 'traj_right' in filename.lower():
-        launch_start = 101930
-    elif 'traj_left' in filename.lower():
-        launch_start = 101900
-    else:
-        launch_start = None
 
     traj_time_idx = None
     traj_lat_at_map = None
@@ -555,8 +598,8 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
                 vmax=global_vmax,
             )
     # Plot rocket trajectories and minute marks
-    lat1, lon1, latm1, lonm1, lata1, lona1, lat_map1, lon_map1 = load_traj('Traj_Left.txt', map_time=map_time)
-    lat2, lon2, latm2, lonm2, lata2, lona2, lat_map2, lon_map2 = load_traj('Traj_Right.txt', map_time=map_time)
+    lat1, lon1, latm1, lonm1, lata1, lona1, lat_map1, lon_map1 = load_traj('36.397_AttitudeSolution.csv', map_time=map_time)
+    lat2, lon2, latm2, lonm2, lata2, lona2, lat_map2, lon_map2 = load_traj('36.398_AttitudeSolution.csv', map_time=map_time)
     ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', zorder=7)
     ax.scatter(lonm1, latm1, color='red', s=15, zorder=7)
     ax.plot(lon2, lat2, color='red', zorder=7)
@@ -713,8 +756,8 @@ def plot_pretty(skymaps, imgs, pfisr, output_path=None, bounds=None, color="gree
     '''
     # Plot rocket trajectories and minute marks
     print('Trajectory')
-    lat1, lon1, latm1, lonm1, lata1, lona1, lat_map1, lon_map1 = load_traj('Traj_Left.txt')
-    lat2, lon2, latm2, lonm2, lata2, lona2, lat_map2, lon_map2 = load_traj('Traj_Right.txt')
+    lat1, lon1, latm1, lonm1, lata1, lona1, lat_map1, lon_map1 = load_traj('36.397_AttitudeSolution.csv')
+    lat2, lon2, latm2, lonm2, lata2, lona2, lat_map2, lon_map2 = load_traj('36.398_AttitudeSolution.csv')
     ax.plot(lon1, lat1, color='red', label='GNEISS trajectory', transform=ccrs.PlateCarree(), zorder=7)
     ax.scatter(lonm1, latm1, color='red', s=15, transform=ccrs.PlateCarree(), zorder=7)
     ax.plot(lon2, lat2, color='red', transform=ccrs.PlateCarree(), zorder=7)
