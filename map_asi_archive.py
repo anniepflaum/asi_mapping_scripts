@@ -62,6 +62,7 @@ FRAME_INTERVAL_SECONDS_GREEN = 0.3
 FRAME_INTERVAL_SECONDS_RED = 0.9
 REFERENCE_NORMALIZATION_TIME = "102400.0"
 TIME_WITH_OPTIONAL_FRACTION_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})(?:\.(\d{1,6}))?$")
+TRAJ_T0_RE = re.compile(r"^T0:\s*(\d{2})/(\d{2})/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?\s+UTC$")
 
 
 def parse_hhmmss_fractional(time_str):
@@ -107,6 +108,29 @@ def format_time_label(time_str):
 def sanitize_time_for_filename(time_str):
     """Return a filename-safe time token preserving fractional seconds."""
     return str(time_str).replace(".", "p")
+
+
+def get_launch_start_from_traj_csv(filename):
+    """Read the T0 launch time from an NSROC attitude-solution CSV as HHMMSS(.fraction)."""
+    if not filename.lower().endswith(".csv"):
+        raise ValueError(f"Trajectory input must be an NSROC attitude-solution CSV: {filename}")
+    with open(filename, "r", encoding="utf-8") as fd:
+        for line in fd:
+            match = TRAJ_T0_RE.match(line.strip())
+            if match:
+                launch_start = f"{match.group(4)}{match.group(5)}{match.group(6)}"
+                if match.group(7):
+                    launch_start = f"{launch_start}.{match.group(7)}"
+                return launch_start
+    return None
+
+
+def format_time_since_launch(map_time, launch_start):
+    """Format T+ seconds relative to launch for a requested map time."""
+    if map_time is None or launch_start is None:
+        return None
+    rel_sec = hhmmss_fractional_to_seconds(map_time) - hhmmss_fractional_to_seconds(launch_start)
+    return f"T{rel_sec:+.1f} s"
 
 
 def parse_tiff_start_datetime(tiff_path):
@@ -396,23 +420,11 @@ def load_traj(filename, map_time=None):
     map_time: string in HHMMSS(.fraction) format (requested map time)
     """
     filename_lower = filename.lower()
-    launch_start = None
     if not filename_lower.endswith(".csv"):
         raise ValueError(f"Trajectory input must be an NSROC attitude-solution CSV: {filename}")
-
-    t0_re = re.compile(r"^T0:\s*(\d{2})/(\d{2})/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?\s+UTC$")
+    launch_start = get_launch_start_from_traj_csv(filename)
     with open(filename, "r", encoding="utf-8") as fd:
         lines = fd.readlines()
-
-    for line in lines:
-        stripped = line.strip()
-        match = t0_re.match(stripped)
-        if match:
-            launch_start = f"{match.group(4)}{match.group(5)}{match.group(6)}"
-            if match.group(7):
-                launch_start = f"{launch_start}.{match.group(7)}"
-            print(f"launch_start: {launch_start}")
-            break
 
     header_idx = None
     for idx, line in enumerate(lines):
@@ -633,7 +645,12 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     if args is not None:
         date_str = args.date
         time_str = args.time
-        label_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}"
+        left_tplus = format_time_since_launch(time_str, get_launch_start_from_traj_csv('36.397_AttitudeSolution.csv'))
+        right_tplus = format_time_since_launch(time_str, get_launch_start_from_traj_csv('36.398_AttitudeSolution.csv'))
+        label_str = (
+            f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}\n"
+            f"36.397 {left_tplus} | 36.398 {right_tplus}"
+        )
     else:
         label_str = ""
     txt = ax.text(0.99, 0.01, label_str,
@@ -768,7 +785,20 @@ def plot_pretty(skymaps, imgs, pfisr, output_path=None, bounds=None, color="gree
     if lat_map2 is not None and lon_map2 is not None:
         ax.scatter(lon_map2, lat_map2, color='orange', s=50, marker='o', zorder=8)
     # Add plot text for date/time
-    txt = ax.text(0.99, 0.01, dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S"),
+    frame = currentframe()
+    args = frame.f_back.f_locals.get('args', None)
+    if args is not None:
+        date_str = args.date
+        time_str = args.time
+        left_tplus = format_time_since_launch(time_str, get_launch_start_from_traj_csv('36.397_AttitudeSolution.csv'))
+        right_tplus = format_time_since_launch(time_str, get_launch_start_from_traj_csv('36.398_AttitudeSolution.csv'))
+        label_str = (
+            f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}\n"
+            f"36.397 {left_tplus} | 36.398 {right_tplus}"
+        )
+    else:
+        label_str = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S")
+    txt = ax.text(0.99, 0.01, label_str,
                  transform=ax.transAxes, fontsize=12, color='w', ha='right', va='bottom',
                  bbox=dict(facecolor='black', alpha=0.5, boxstyle='round,pad=0.2'))
     ax.set_title(f"Mapped ASIs and GNEISS trajectory ({color} channel)")
