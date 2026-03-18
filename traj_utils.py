@@ -100,3 +100,81 @@ def load_traj(filename, map_time=None):
             traj_lon_at_map = lons[traj_time_idx]
 
     return lats, lons, latsm, lonsm, lata, lona, traj_lat_at_map, traj_lon_at_map
+
+
+def load_traj_times(filename):
+    """Read the raw trajectory time column from an NSROC attitude-solution CSV."""
+    if not filename.lower().endswith(".csv"):
+        raise ValueError(f"Trajectory input must be an NSROC attitude-solution CSV: {filename}")
+    with open(filename, "r", encoding="utf-8") as fd:
+        lines = fd.readlines()
+
+    header_idx = None
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("Time,") and "Latgd" in stripped and "Long" in stripped and "Alt" in stripped:
+            header_idx = idx
+            break
+    if header_idx is None:
+        raise ValueError(f"Could not find trajectory header in {filename}")
+
+    reader = csv.reader(lines[header_idx:])
+    next(reader, None)
+    next(reader, None)
+    rows = []
+    for values in reader:
+        if not values or not any(value.strip() for value in values):
+            continue
+        rows.append(values)
+    return np.array([float(row[0].strip()) for row in rows], dtype=float)
+
+
+def build_traj_lookup(traj_path):
+    """Load and cache one trajectory for repeated nearest-time lookup."""
+    lats, lons, _latm, _lonm, _lata, _lona, _lat_map, _lon_map = load_traj(traj_path)
+    launch_start = get_launch_start_from_traj_csv(traj_path)
+    return {
+        "times": load_traj_times(traj_path),
+        "lats": np.asarray(lats, dtype=float),
+        "lons": np.asarray(lons, dtype=float),
+        "launch_sec": hhmmss_fractional_to_seconds(launch_start) if launch_start else None,
+        "path": traj_path,
+    }
+
+
+def lookup_traj_position(traj_lookup, map_time):
+    """Return the mapped lat/lon trajectory point nearest a requested map time."""
+    launch_sec = traj_lookup["launch_sec"]
+    if map_time is None or launch_sec is None:
+        return None, None
+    rel_sec = hhmmss_fractional_to_seconds(map_time) - launch_sec
+    times = traj_lookup["times"]
+    if times.size == 0 or rel_sec < 0 or rel_sec > times[-1]:
+        return None, None
+    idx = int(np.argmin(np.abs(times - rel_sec)))
+    return float(traj_lookup["lats"][idx]), float(traj_lookup["lons"][idx])
+
+
+def resample_traj_by_distance(traj_lookup, n_samples):
+    """Resample a mapped trajectory to equal cumulative-distance intervals."""
+    lats = np.asarray(traj_lookup["lats"], dtype=float)
+    lons = np.asarray(traj_lookup["lons"], dtype=float)
+    if lats.size == 0 or lons.size == 0 or lats.size != lons.size:
+        raise ValueError("trajectory lookup has invalid coordinates")
+    if n_samples < 2:
+        raise ValueError("n_samples must be at least 2")
+
+    mean_lat = np.deg2rad(np.nanmean(lats))
+    x = lons * np.cos(mean_lat)
+    y = lats
+    ds = np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2)
+    s = np.concatenate(([0.0], np.cumsum(ds)))
+    if s[-1] <= 0:
+        lat_resampled = np.full(n_samples, lats[0], dtype=float)
+        lon_resampled = np.full(n_samples, lons[0], dtype=float)
+        return lat_resampled, lon_resampled, np.linspace(0.0, 1.0, n_samples)
+
+    target_s = np.linspace(0.0, s[-1], n_samples)
+    lat_resampled = np.interp(target_s, s, lats)
+    lon_resampled = np.interp(target_s, s, lons)
+    return lat_resampled, lon_resampled, target_s / s[-1]
