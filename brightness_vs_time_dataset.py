@@ -11,15 +11,11 @@ For each time step in a requested range, this script:
 """
 
 import argparse
-import csv
 import datetime as dt
 from pathlib import Path
 
 import check_intersect as ci
-import numpy as np
-import tifffile
 from asi_time_utils import (
-    hhmmss_fractional_to_seconds,
     parse_date_and_time,
     parse_hhmmss_fractional,
     sanitize_time_for_filename,
@@ -32,8 +28,8 @@ from map_asi_archive import (
     load_skymaps,
     retrieve_image,
 )
-from tiff_utils import get_site_tiff_candidates, parse_tiff_start_datetime
-from traj_utils import get_launch_start_from_traj_csv, load_traj
+from tiff_utils import build_tiff_metadata, get_site_tiff_candidates, load_best_frame_from_cached_tiffs
+from traj_utils import build_traj_lookup, lookup_traj_position
 
 
 def format_time_arg(t):
@@ -49,102 +45,6 @@ def make_output_path(out_arg, date, start, end, step):
     end_tok = sanitize_time_for_filename(end)
     step_tok = str(step).replace(".", "p")
     return Path(f"brightness_vs_time_{date}_{start_tok}_{end_tok}_step{step_tok}.csv")
-
-
-def build_traj_lookup(traj_path):
-    """Load and cache one trajectory for repeated nearest-time lookup."""
-    lats, lons, _latm, _lonm, _lata, _lona, _lat_map, _lon_map = load_traj(traj_path)
-    launch_start = get_launch_start_from_traj_csv(traj_path)
-    launch_sec = hhmmss_fractional_to_seconds(launch_start) if launch_start else None
-    times = np.array([], dtype=float)
-    if launch_sec is not None:
-        with open(traj_path, "r", encoding="utf-8") as fd:
-            lines = fd.readlines()
-        header_idx = None
-        for idx, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped.startswith("Time,") and "Latgd" in stripped and "Long" in stripped and "Alt" in stripped:
-                header_idx = idx
-                break
-        if header_idx is None:
-            raise ValueError(f"Could not find trajectory header in {traj_path}")
-        reader = csv.reader(lines[header_idx:])
-        next(reader, None)
-        next(reader, None)
-        time_idx = 0
-        rows = []
-        for values in reader:
-            if not values or not any(value.strip() for value in values):
-                continue
-            rows.append(values)
-        times = np.array([float(row[time_idx].strip()) for row in rows], dtype=float)
-    return {
-        "times": np.asarray(times, dtype=float),
-        "lats": np.asarray(lats, dtype=float),
-        "lons": np.asarray(lons, dtype=float),
-        "launch_sec": launch_sec,
-    }
-
-
-def lookup_traj_position(traj_lookup, map_time):
-    """Return the mapped lat/lon trajectory point nearest a requested map time."""
-    launch_sec = traj_lookup["launch_sec"]
-    if map_time is None or launch_sec is None:
-        return None, None
-    rel_sec = hhmmss_fractional_to_seconds(map_time) - launch_sec
-    times = traj_lookup["times"]
-    if rel_sec < 0 or rel_sec > times[-1]:
-        return None, None
-    idx = int(np.argmin(np.abs(times - rel_sec)))
-    return float(traj_lookup["lats"][idx]), float(traj_lookup["lons"][idx])
-
-
-def build_tiff_metadata(tiff_paths, frame_interval):
-    """Cache TIFF time coverage so frames can be selected without rescanning every file."""
-    metadata = []
-    for path in tiff_paths:
-        start_dt = parse_tiff_start_datetime(path)
-        with tifffile.TiffFile(path) as tif:
-            n_frames = len(tif.pages)
-        metadata.append(
-            {
-                "path": path,
-                "start_dt": start_dt,
-                "n_frames": n_frames,
-                "end_dt": start_dt + dt.timedelta(seconds=(n_frames - 1) * frame_interval),
-            }
-        )
-    return metadata
-
-
-def load_best_frame_from_cached_tiffs(site, tiff_metadata, target_dt, frame_interval):
-    """Load the frame nearest target_dt using precomputed TIFF coverage metadata."""
-    if not tiff_metadata:
-        raise FileNotFoundError(f"No TIFF files found for {site}")
-
-    candidates = []
-    for meta in tiff_metadata:
-        raw_idx = int(round((target_dt - meta["start_dt"]).total_seconds() / frame_interval))
-        idx = min(max(raw_idx, 0), meta["n_frames"] - 1)
-        frame_dt = meta["start_dt"] + dt.timedelta(seconds=idx * frame_interval)
-        candidates.append(
-            {
-                "path": meta["path"],
-                "idx": idx,
-                "delta_s": abs((frame_dt - target_dt).total_seconds()),
-                "in_range": meta["start_dt"] <= target_dt <= meta["end_dt"],
-            }
-        )
-
-    in_range_candidates = [c for c in candidates if c["in_range"]]
-    best = min(in_range_candidates or candidates, key=lambda c: c["delta_s"])
-
-    with tifffile.TiffFile(best["path"]) as tif:
-        im = tif.pages[best["idx"]].asarray()
-    if im.ndim == 3:
-        im = im[:, :, 0]
-    return im.astype(np.float32)
-
 
 def main():
     ap = argparse.ArgumentParser()

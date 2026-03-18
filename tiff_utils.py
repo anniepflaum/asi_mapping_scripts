@@ -114,3 +114,50 @@ def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval, colo
         im = im[:, :, 0]
     im_raw = im.astype(np.float32)
     return im_raw, im_raw.copy().astype(np.float32)
+
+
+def build_tiff_metadata(tiff_paths, frame_interval):
+    """Cache TIFF time coverage so repeated frame selection avoids rescanning files."""
+    metadata = []
+    for path in tiff_paths:
+        start_dt = parse_tiff_start_datetime(path)
+        with tifffile.TiffFile(path) as tif:
+            n_frames = len(tif.pages)
+        metadata.append(
+            {
+                "path": path,
+                "start_dt": start_dt,
+                "n_frames": n_frames,
+                "end_dt": start_dt + dt.timedelta(seconds=(n_frames - 1) * frame_interval),
+            }
+        )
+    return metadata
+
+
+def load_best_frame_from_cached_tiffs(site, tiff_metadata, target_dt, frame_interval):
+    """Load the frame nearest target_dt using precomputed TIFF coverage metadata."""
+    if not tiff_metadata:
+        raise FileNotFoundError(f"No TIFF files found for {site}")
+
+    candidates = []
+    for meta in tiff_metadata:
+        raw_idx = int(round((target_dt - meta["start_dt"]).total_seconds() / frame_interval))
+        idx = min(max(raw_idx, 0), meta["n_frames"] - 1)
+        frame_dt = meta["start_dt"] + dt.timedelta(seconds=idx * frame_interval)
+        candidates.append(
+            {
+                "path": meta["path"],
+                "idx": idx,
+                "delta_s": abs((frame_dt - target_dt).total_seconds()),
+                "in_range": meta["start_dt"] <= target_dt <= meta["end_dt"],
+            }
+        )
+
+    in_range_candidates = [c for c in candidates if c["in_range"]]
+    best = min(in_range_candidates or candidates, key=lambda c: c["delta_s"])
+
+    with tifffile.TiffFile(best["path"]) as tif:
+        im = tif.pages[best["idx"]].asarray()
+    if im.ndim == 3:
+        im = im[:, :, 0]
+    return im.astype(np.float32)
