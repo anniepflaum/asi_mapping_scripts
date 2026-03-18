@@ -39,13 +39,19 @@ import datetime as dt
 import time
 import check_intersect as ci
 import generate_skymap as skymap
-import tifffile
 import json
 import re
-import csv
-from glob import glob
 from inspect import currentframe
 from fetch_url import closest_amisr_png_url
+from asi_time_utils import (
+    format_time_label,
+    hhmmss_fractional_to_seconds,
+    parse_date_and_time,
+    parse_hhmmss_fractional,
+    sanitize_time_for_filename,
+)
+from tiff_utils import get_site_tiff_candidates, load_best_frame_from_tiffs
+from traj_utils import format_time_since_launch, get_launch_start_from_traj_csv, load_traj
 try:
     from resolvedvelocities.ResolveVectorsLat import ResolveVectorsLat
 except ImportError:
@@ -61,188 +67,6 @@ apex = Apex()
 FRAME_INTERVAL_SECONDS_GREEN = 0.3
 FRAME_INTERVAL_SECONDS_RED = 0.9
 REFERENCE_NORMALIZATION_TIME = "102400.0"
-TIME_WITH_OPTIONAL_FRACTION_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})(?:\.(\d{1,6}))?$")
-TRAJ_T0_RE = re.compile(r"^T0:\s*(\d{2})/(\d{2})/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?\s+UTC$")
-
-
-def parse_hhmmss_fractional(time_str):
-    """
-    Parse a time string in HHMMSS or HHMMSS.<fraction> format.
-    Returns (hour, minute, second, microsecond, frac_str_or_none).
-    """
-    m = TIME_WITH_OPTIONAL_FRACTION_RE.fullmatch(str(time_str).strip())
-    if not m:
-        raise ValueError("time must be HHMMSS or HHMMSS.s (up to 6 fractional digits)")
-    hour = int(m.group(1))
-    minute = int(m.group(2))
-    second = int(m.group(3))
-    if hour > 23 or minute > 59 or second > 59:
-        raise ValueError("time components out of range (HH: 00-23, MM/SS: 00-59)")
-    frac = m.group(4)
-    microsecond = int(frac.ljust(6, "0")) if frac else 0
-    return hour, minute, second, microsecond, frac
-
-
-def parse_date_and_time(date_str, time_str):
-    """Parse YYYYMMDD and HHMMSS(.fraction) into a datetime."""
-    if not re.fullmatch(r"\d{8}", str(date_str).strip()):
-        raise ValueError("date must be YYYYMMDD")
-    base_date = dt.datetime.strptime(date_str, "%Y%m%d")
-    hour, minute, second, microsecond, _ = parse_hhmmss_fractional(time_str)
-    return base_date.replace(hour=hour, minute=minute, second=second, microsecond=microsecond)
-
-
-def hhmmss_fractional_to_seconds(time_str):
-    """Convert HHMMSS(.fraction) to seconds since midnight as float."""
-    hour, minute, second, microsecond, _ = parse_hhmmss_fractional(time_str)
-    return hour * 3600.0 + minute * 60.0 + second + microsecond / 1e6
-
-
-def format_time_label(time_str):
-    """Format HHMMSS(.fraction) as HH:MM:SS(.fraction) for plot labels."""
-    hour, minute, second, _, frac = parse_hhmmss_fractional(time_str)
-    base = f"{hour:02d}:{minute:02d}:{second:02d}"
-    return f"{base}.{frac}" if frac else base
-
-
-def sanitize_time_for_filename(time_str):
-    """Return a filename-safe time token preserving fractional seconds."""
-    return str(time_str).replace(".", "p")
-
-
-def get_launch_start_from_traj_csv(filename):
-    """Read the T0 launch time from an NSROC attitude-solution CSV as HHMMSS(.fraction)."""
-    if not filename.lower().endswith(".csv"):
-        raise ValueError(f"Trajectory input must be an NSROC attitude-solution CSV: {filename}")
-    with open(filename, "r", encoding="utf-8") as fd:
-        for line in fd:
-            match = TRAJ_T0_RE.match(line.strip())
-            if match:
-                launch_start = f"{match.group(4)}{match.group(5)}{match.group(6)}"
-                if match.group(7):
-                    launch_start = f"{launch_start}.{match.group(7)}"
-                return launch_start
-    return None
-
-
-def format_time_since_launch(map_time, launch_start):
-    """Format T+ seconds relative to launch for a requested map time."""
-    if map_time is None or launch_start is None:
-        return None
-    rel_sec = hhmmss_fractional_to_seconds(map_time) - hhmmss_fractional_to_seconds(launch_start)
-    return f"T{rel_sec:+.1f} s"
-
-
-def parse_tiff_start_datetime(tiff_path):
-    """Parse TIFF start datetime from filename pattern *_YYYYMMDD_HHMMSS.tiff."""
-    fname = os.path.basename(tiff_path)
-    m = re.search(r'_(\d{8})_(\d{6})\.tiff$', fname)
-    if not m:
-        raise ValueError(f"Could not parse start time from TIFF filename: {fname}")
-    return dt.datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
-
-
-def get_site_tiff_candidates(site, date_str, color, override_dirs=None):
-    """
-    Return candidate TIFF paths for a site.
-    Priority:
-    1) TIFFs discovered from explicit CLI folder(s) (`override_dirs`) if provided.
-    2) Auto-discovered TIFFs for the requested date in ../raw_tiffs/<COLOR>/<SITE>/.
-    """
-    if isinstance(override_dirs, str):
-        override_dirs = [override_dirs]
-    dirs_to_search = list(override_dirs) if override_dirs else [f"../raw_tiffs/{color}/{site}"]
-    # Be tolerant of BRV/BVR naming drift in folder and filename conventions.
-    if site == "BVR":
-        alt_dir = f"../raw_tiffs/{color}/BRV"
-        if alt_dir not in dirs_to_search:
-            dirs_to_search.append(alt_dir)
-        site_prefixes = ["BVR", "BRV"]
-    else:
-        site_prefixes = [site]
-
-    matched_paths = []
-    searched_patterns = []
-    for folder in dirs_to_search:
-        for prefix in site_prefixes:
-            patterns = [
-                os.path.join(folder, f"{prefix}_558_{date_str}_*.tiff"),
-                os.path.join(folder, f"*_{date_str}_*.tiff"),
-            ]
-            for pattern in patterns:
-                searched_patterns.append(pattern)
-                matched_paths.extend(glob(pattern))
-
-    unique_paths = sorted(set(matched_paths))
-    if not unique_paths:
-        print(f"{site}: no TIFFs matched for date {date_str}.")
-        print(f"{site}: searched patterns: {', '.join(searched_patterns)}")
-    return unique_paths
-
-
-def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval=FRAME_INTERVAL_SECONDS_GREEN, color="green", verbose=True):
-    """
-    Search all candidate TIFF tiles and load the frame closest to target_dt.
-    Prefer TIFFs whose coverage includes target_dt; if none do, use nearest boundary frame.
-    Returns (raw_image, normalized_image), both float32 arrays.
-    """
-    if not tiff_paths:
-        raise FileNotFoundError(f"No TIFF files found for {site}")
-
-    candidates = []
-    errors = []
-    for path in tiff_paths:
-        try:
-            start_dt = parse_tiff_start_datetime(path)
-            with tifffile.TiffFile(path) as tif:
-                n_frames = len(tif.pages)
-            end_dt = start_dt + dt.timedelta(seconds=(n_frames - 1) * frame_interval)
-            raw_idx = int(round((target_dt - start_dt).total_seconds() / frame_interval))
-            idx = min(max(raw_idx, 0), n_frames - 1)
-            frame_dt = start_dt + dt.timedelta(seconds=idx * frame_interval)
-            delta_s = abs((frame_dt - target_dt).total_seconds())
-            in_range = start_dt <= target_dt <= end_dt
-            candidates.append({
-                'path': path,
-                'idx': idx,
-                'n_frames': n_frames,
-                'delta_s': delta_s,
-                'frame_dt': frame_dt,
-                'in_range': in_range,
-            })
-        except Exception as exc:
-            errors.append(f"{path}: {exc}")
-
-    if not candidates:
-        raise RuntimeError(f"All TIFF candidates failed for {site}: {'; '.join(errors)}")
-
-    in_range_candidates = [c for c in candidates if c['in_range']]
-    if in_range_candidates:
-        best = min(in_range_candidates, key=lambda c: c['delta_s'])
-    else:
-        best = min(candidates, key=lambda c: c['delta_s'])
-        if verbose:
-            print(
-                f"{site}: requested time outside all tile ranges; "
-                f"using nearest boundary frame."
-            )
-
-    if verbose:
-        print(
-            f"{site}: {os.path.basename(best['path'])} frame "
-            f"{best['idx'] + 1}/{best['n_frames']} "
-            f"(delta {best['delta_s']:.2f}s)"
-        )
-
-    with tifffile.TiffFile(best['path']) as tif:
-        im = tif.pages[best['idx']].asarray()
-    if im.ndim == 3:
-        im = im[:, :, 0]
-    im_raw = im.astype(np.float32)
-
-    # Display normalization is applied globally across sites in plot_fast().
-    im_boost = im_raw.copy()
-    return im_raw, im_boost.astype(np.float32)
 
 
 def sample_raw_brightness_at_latlon(site, lat0, lon0, skymaps, imgs_raw):
@@ -350,12 +174,34 @@ def compute_reference_norm_limits(skymaps, selected_sites, date, ref_time_str, c
         return None, None
 
     all_vals = np.concatenate(norm_pool)
-    vmin = float(np.percentile(all_vals, 1))
-    vmax = float(np.percentile(all_vals, 99))
-    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
-        vmin = float(np.nanmin(all_vals))
-        vmax = float(np.nanmax(all_vals))
+    pos_vals = all_vals[np.isfinite(all_vals) & (all_vals > 0)]
+    if pos_vals.size == 0:
+        print(f"Reference normalization at {ref_time_str} found no positive pixels; falling back to per-frame normalization.")
+        return None, None
+    vmin = float(np.percentile(pos_vals, 1))
+    vmax = float(np.percentile(pos_vals, 99))
+    if not np.isfinite(vmin) or vmin <= 0:
+        vmin = float(np.nanmin(pos_vals))
+    if not np.isfinite(vmax) or vmax <= vmin:
+        vmax = float(np.nanmax(pos_vals))
     print(f"Normalization fixed to {ref_time_str}: vmin={vmin:.2f}, vmax={vmax:.2f}")
+    return vmin, vmax
+
+
+def compute_log_image_limits(norm_pool):
+    """Return positive vmin/vmax limits suitable for log-scaled image plotting."""
+    if not norm_pool:
+        return None, None
+    all_vals = np.concatenate(norm_pool)
+    pos_vals = all_vals[np.isfinite(all_vals) & (all_vals > 0)]
+    if pos_vals.size == 0:
+        return None, None
+    vmin = float(np.percentile(pos_vals, 1))
+    vmax = float(np.percentile(pos_vals, 99))
+    if not np.isfinite(vmin) or vmin <= 0:
+        vmin = float(np.nanmin(pos_vals))
+    if not np.isfinite(vmax) or vmax <= vmin:
+        vmax = float(np.nanmax(pos_vals))
     return vmin, vmax
 
 def load_skymaps(selected_sites=None, color="green"):
@@ -410,78 +256,6 @@ def retrieve_image(url):
         # If image is RGB, take only one channel (shouldn't be needed, but for safety)
         img = img[:, :, 0]
     return img.astype(np.float32)
-
-
-def load_traj(filename, map_time=None):
-    """
-    Loads rocket trajectory from an NSROC attitude-solution CSV.
-    Maps lat/lon to 110 km altitude using Apex.
-    Returns full trajectory, minute marks, apogee location, and optionally the trajectory point corresponding to map_time.
-    map_time: string in HHMMSS(.fraction) format (requested map time)
-    """
-    filename_lower = filename.lower()
-    if not filename_lower.endswith(".csv"):
-        raise ValueError(f"Trajectory input must be an NSROC attitude-solution CSV: {filename}")
-    launch_start = get_launch_start_from_traj_csv(filename)
-    with open(filename, "r", encoding="utf-8") as fd:
-        lines = fd.readlines()
-
-    header_idx = None
-    for idx, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("Time,") and "Latgd" in stripped and "Long" in stripped and "Alt" in stripped:
-            header_idx = idx
-            break
-    if header_idx is None:
-        raise ValueError(f"Could not find trajectory header in {filename}")
-
-    reader = csv.reader(lines[header_idx:])
-    header = next(reader, None)
-    next(reader, None)  # units row
-    if header is None:
-        raise ValueError(f"Could not read trajectory header in {filename}")
-    columns = [column.strip() for column in header]
-
-    rows = []
-    for values in reader:
-        if not values or not any(value.strip() for value in values):
-            continue
-        row = {column: value.strip() for column, value in zip(columns, values)}
-        if not row.get("Time"):
-            continue
-        rows.append(row)
-    if not rows:
-        raise ValueError(f"No trajectory samples found in {filename}")
-
-    times = np.array([float(row["Time"]) for row in rows], dtype=float)
-    lats = np.array([float(row["Latgd"]) for row in rows], dtype=float)
-    lons = np.array([float(row["Long"]) for row in rows], dtype=float)
-    alts = np.array([float(row["Alt"]) for row in rows], dtype=float) / 1000.0
-
-    lats, lons, _ = apex.map_to_height(lats, lons, alts, 110.)
-    idx = np.argwhere(np.isclose(times % 60, 0.0, atol=0.05))
-    timem = times[idx].squeeze()
-    latsm = lats[idx].squeeze()
-    lonsm = lons[idx].squeeze()
-    aidx = np.argmax(alts)
-    lata = lats[aidx]
-    lona = lons[aidx]
-
-    traj_time_idx = None
-    traj_lat_at_map = None
-    traj_lon_at_map = None
-    if map_time is not None and launch_start is not None:
-        # Convert map_time and launch_start to seconds since midnight
-        map_sec = hhmmss_fractional_to_seconds(map_time)
-        launch_sec = hhmmss_fractional_to_seconds(str(launch_start).zfill(6))
-        rel_sec = map_sec - launch_sec
-        # Find closest time in trajectory
-        if rel_sec >= 0 and rel_sec <= times[-1]:
-            traj_time_idx = np.argmin(np.abs(times - rel_sec))
-            traj_lat_at_map = lats[traj_time_idx]
-            traj_lon_at_map = lons[traj_time_idx]
-
-    return lats, lons, latsm, lonsm, lata, lona, traj_lat_at_map, traj_lon_at_map
 
 
 def retrieve_pfisr():
@@ -565,6 +339,7 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     for site, img in imgs.items():
         side_img = img.copy()
         side_img[skymaps[site]['mask']] = np.nan
+        side_img[side_img <= 0] = np.nan
         main_img = side_img.copy()
         for m in skymaps[site]['extra_masks'].values():
             main_img[m] = np.nan
@@ -577,21 +352,17 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     if norm_limits is not None and norm_limits[0] is not None and norm_limits[1] is not None:
         global_vmin, global_vmax = norm_limits
     else:
-        global_vmin = None
-        global_vmax = None
-        if norm_pool:
-            all_vals = np.concatenate(norm_pool)
-            global_vmin = float(np.percentile(all_vals, 1))
-            global_vmax = float(np.percentile(all_vals, 99))
-            if not np.isfinite(global_vmin) or not np.isfinite(global_vmax) or global_vmax <= global_vmin:
-                global_vmin = float(np.nanmin(all_vals))
-                global_vmax = float(np.nanmax(all_vals))
+        global_vmin, global_vmax = compute_log_image_limits(norm_pool)
+
+    log_norm = None
+    if global_vmin is not None and global_vmax is not None:
+        log_norm = mpl.colors.LogNorm(vmin=global_vmin, vmax=global_vmax)
 
     # Plot each site's mapped image with one shared normalization.
     for site in imgs.keys():
         main_img = main_images[site]
         side_img = side_images[site]
-        if global_vmin is None or global_vmax is None:
+        if log_norm is None:
             im_handle = ax.pcolor(skymaps[site]['lon'], skymaps[site]['lat'], main_img)
             ax1[site].pcolor(skymaps[site]['lon'], skymaps[site]['lat'], side_img)
         else:
@@ -599,15 +370,13 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
                 skymaps[site]['lon'],
                 skymaps[site]['lat'],
                 main_img,
-                vmin=global_vmin,
-                vmax=global_vmax,
+                norm=log_norm,
             )
             ax1[site].pcolor(
                 skymaps[site]['lon'],
                 skymaps[site]['lat'],
                 side_img,
-                vmin=global_vmin,
-                vmax=global_vmax,
+                norm=log_norm,
             )
     # Plot rocket trajectories and minute marks
     lat1, lon1, latm1, lonm1, lata1, lona1, lat_map1, lon_map1 = load_traj('36.397_AttitudeSolution.csv', map_time=map_time)
@@ -749,8 +518,23 @@ def plot_pretty(skymaps, imgs, pfisr, output_path=None, bounds=None, color="gree
         ax1[site].set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
         ax1[site].set_title(site)
     # Plot each site's mapped image
+    norm_pool = []
     for site, img in imgs.items():
         img[skymaps[site]['mask']] = np.nan
+        img[img <= 0] = np.nan
+        im = img.copy()
+        lat = skymaps[site]['lat'].copy()
+        lon = skymaps[site]['lon'].copy()
+        for m in skymaps[site]['extra_masks'].values():
+            im[m] = np.nan
+        vals = im[np.isfinite(im)]
+        if vals.size > 0:
+            norm_pool.append(vals)
+    vmin, vmax = compute_log_image_limits(norm_pool)
+    log_norm = mpl.colors.LogNorm(vmin=vmin, vmax=vmax) if vmin is not None and vmax is not None else None
+    for site, img in imgs.items():
+        img[skymaps[site]['mask']] = np.nan
+        img[img <= 0] = np.nan
         im = img.copy()
         lat = skymaps[site]['lat'].copy()
         lon = skymaps[site]['lon'].copy()
@@ -759,11 +543,11 @@ def plot_pretty(skymaps, imgs, pfisr, output_path=None, bounds=None, color="gree
         img_flat = img[~skymaps[site]['mask']].flatten()
         lon_flat = skymaps[site]['lon'][~skymaps[site]['mask']].flatten()
         lat_flat = skymaps[site]['lat'][~skymaps[site]['mask']].flatten()
-        im_handle = ax1[site].tripcolor(lon_flat, lat_flat, img_flat, zorder=3, transform=ccrs.PlateCarree())
+        im_handle = ax1[site].tripcolor(lon_flat, lat_flat, img_flat, zorder=3, transform=ccrs.PlateCarree(), norm=log_norm)
         imf = im[np.isfinite(im)].flatten()
         latf = lat[np.isfinite(im)].flatten()
         lonf = lon[np.isfinite(im)].flatten()
-        ax.tripcolor(lonf, latf, imf, transform=ccrs.PlateCarree())
+        ax.tripcolor(lonf, latf, imf, transform=ccrs.PlateCarree(), norm=log_norm)
     # Plot PFISR data
     '''
     print('PFISR')
