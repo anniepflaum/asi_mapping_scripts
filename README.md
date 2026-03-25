@@ -108,12 +108,6 @@ python3 trajectory_keogram.py \
   --sites ARV BVR VEE
 ```
 
-## Notes
-
-- `map_asi_archive.py` currently defaults to log color scaling.
-- PKR lookup uses remote PNG discovery through `core/fetch_url.py`.
-- The scripts are designed to be run from the repository root `asi_mapping_scripts/`.
-
 ## Output
 
 Outputs are typically written under `../mapped/<color>/`, for example:
