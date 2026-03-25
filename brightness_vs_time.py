@@ -11,25 +11,27 @@ For each time step in a requested range, this script:
 """
 
 import argparse
+import csv
 import datetime as dt
 from pathlib import Path
 
-import check_intersect as ci
-from asi_time_utils import (
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+
+from core.brightness import best_rocket_brightness
+from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
+from core.masks import build_overlap_masks
+from core.remote_data import retrieve_image
+from core.skymaps import load_skymaps
+from core.time_utils import (
     parse_date_and_time,
     parse_hhmmss_fractional,
     sanitize_time_for_filename,
 )
-from map_asi_archive import (
-    FRAME_INTERVAL_SECONDS_GREEN,
-    FRAME_INTERVAL_SECONDS_RED,
-    best_rocket_brightness,
-    closest_amisr_png_url,
-    load_skymaps,
-    retrieve_image,
-)
-from tiff_utils import build_tiff_metadata, get_site_tiff_candidates, load_best_frame_from_cached_tiffs
-from traj_utils import build_traj_lookup, lookup_traj_position
+from core.fetch_url import closest_amisr_png_url
+from core.paths import LEFT_TRAJECTORY_PATH, RIGHT_TRAJECTORY_PATH
+from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates, load_best_frame_from_cached_tiffs
+from core.traj_utils import build_traj_lookup, lookup_traj_position
 
 
 def format_time_arg(t):
@@ -46,6 +48,33 @@ def make_output_path(out_arg, date, start, end, step):
     step_tok = str(step).replace(".", "p")
     return Path(f"brightness_vs_time_{date}_{start_tok}_{end_tok}_step{step_tok}.csv")
 
+
+def make_plot_output_path(csv_path, output_arg):
+    if output_arg:
+        return Path(output_arg)
+    return Path(csv_path).with_suffix(".png")
+
+
+def plot_brightness_timeseries(times, left, right, output_path, title):
+    if not times:
+        raise ValueError("No rows with iso_time were collected")
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.scatter(times, left, color="tab:red", s=10, label="397 brightness")
+    ax.scatter(times, right, color="tab:blue", s=10, label="398 brightness")
+    ax.set_title(title)
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Brightness")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=1))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved plot to {output_path}")
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default="20260210", help="Date YYYYMMDD")
@@ -55,6 +84,9 @@ def main():
     ap.add_argument("--sites", nargs="*", default=["ARV", "BVR", "VEE", "PKR"], help="Sites to include")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--output", default=None, help="Output CSV path")
+    ap.add_argument("--plot-output", default=None, help="Optional output PNG path for the brightness plot")
+    ap.add_argument("--plot-title", default=None, help="Optional plot title")
+    ap.add_argument("--no-plot", action="store_true", help="Write the CSV only and skip the PNG plot")
     ap.add_argument("--arv-tiffs", nargs="*", default=None, help="Optional ARV TIFF folder(s)")
     ap.add_argument("--vee-tiffs", nargs="*", default=None, help="Optional VEE TIFF folder(s)")
     ap.add_argument("--bvr-tiffs", nargs="*", default=None, help="Optional BVR TIFF folder(s)")
@@ -76,24 +108,7 @@ def main():
     selected_sites = set(s.upper() for s in args.sites)
     skymaps = load_skymaps(selected_sites, color=args.color)
 
-    # Build intersection masks once.
-    sites = list(skymaps.keys())
-    for s0 in sites:
-        red_sites = sites.copy()
-        red_sites.remove(s0)
-        skymaps[s0]["extra_masks"] = {}
-        for s1 in red_sites:
-            m0, m1 = ci.calculate_masks(
-                skymaps[s0]["site_lat"],
-                skymaps[s0]["site_lon"],
-                skymaps[s0]["azmt"],
-                skymaps[s0]["elev"],
-                skymaps[s1]["site_lat"],
-                skymaps[s1]["site_lon"],
-                skymaps[s1]["azmt"],
-                skymaps[s1]["elev"],
-            )
-            skymaps[s0]["extra_masks"][s1] = m0
+    build_overlap_masks(skymaps)
 
     tiff_overrides = {
         "ARV": args.arv_tiffs,
@@ -111,10 +126,12 @@ def main():
         if site in tiff_candidates:
             tiff_metadata[site] = build_tiff_metadata(tiff_candidates[site], frame_interval)
 
-    left_traj = build_traj_lookup("36.397_AttitudeSolution.csv")
-    right_traj = build_traj_lookup("36.398_AttitudeSolution.csv")
+    left_traj = build_traj_lookup(str(LEFT_TRAJECTORY_PATH))
+    right_traj = build_traj_lookup(str(RIGHT_TRAJECTORY_PATH))
 
     out_path = make_output_path(args.output, args.date, args.start, args.end, args.step)
+    if not out_path.is_absolute():
+        out_path = Path("..") / "mapped" / args.color / out_path
 
     fieldnames = [
         "date",
@@ -134,6 +151,9 @@ def main():
     ]
 
     rows = []
+    plot_times = []
+    plot_left = []
+    plot_right = []
     step_td = dt.timedelta(seconds=args.step)
     t = start_dt
     while t <= end_dt:
@@ -168,6 +188,9 @@ def main():
         left = best_rocket_brightness(lat_l, lon_l, skymaps, imgs_raw) if lat_l is not None and lon_l is not None else None
         right = best_rocket_brightness(lat_r, lon_r, skymaps, imgs_raw) if lat_r is not None and lon_r is not None else None
 
+        plot_times.append(t)
+        plot_left.append(left["raw_brightness"] if left else None)
+        plot_right.append(right["raw_brightness"] if right else None)
         rows.append(
             {
                 "date": args.date,
@@ -195,6 +218,10 @@ def main():
         writer.writerows(rows)
 
     print(f"Wrote {len(rows)} rows to {out_path}")
+    if not args.no_plot:
+        plot_output = make_plot_output_path(out_path, args.plot_output)
+        plot_title = args.plot_title or f"Brightness vs Time ({args.color})"
+        plot_brightness_timeseries(plot_times, plot_left, plot_right, plot_output, plot_title)
 
 
 if __name__ == "__main__":

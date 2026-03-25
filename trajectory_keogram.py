@@ -5,7 +5,10 @@ import argparse
 import datetime as dt
 from pathlib import Path
 
-import check_intersect as ci
+from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
+from core.masks import build_overlap_masks
+from core.paths import LEFT_TRAJECTORY_PATH, RIGHT_TRAJECTORY_PATH
+from core.skymaps import load_skymaps
 import matplotlib.dates as mdates
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -13,11 +16,10 @@ from matplotlib.ticker import FuncFormatter
 import numpy as np
 from scipy.spatial import cKDTree
 
-from asi_time_utils import format_time_label, parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
-from brightness_vs_time_dataset import format_time_arg
-from map_asi_archive import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED, load_skymaps
-from tiff_utils import build_tiff_metadata, get_site_tiff_candidates, load_best_frame_from_cached_tiffs
-from traj_utils import build_traj_lookup, get_launch_start_from_traj_csv, lookup_traj_position, resample_traj_by_distance
+from core.time_utils import format_time_label, parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
+from brightness_vs_time import format_time_arg
+from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates, load_best_frame_from_cached_tiffs
+from core.traj_utils import build_traj_lookup, get_launch_start_from_traj_csv, resample_traj_by_time
 
 
 def build_output_path(output_arg, date_str, start, end, color):
@@ -26,27 +28,6 @@ def build_output_path(output_arg, date_str, start, end, color):
     start_tok = sanitize_time_for_filename(start)
     end_tok = sanitize_time_for_filename(end)
     return Path(f"../mapped/{color}/trajectory_keogram_{color}_{date_str}_{start_tok}_{end_tok}.png")
-
-
-def build_intersection_masks(skymaps):
-    sites = list(skymaps.keys())
-    for s0 in sites:
-        red_sites = sites.copy()
-        red_sites.remove(s0)
-        skymaps[s0]["extra_masks"] = {}
-        for s1 in red_sites:
-            m0, _m1 = ci.calculate_masks(
-                skymaps[s0]["site_lat"],
-                skymaps[s0]["site_lon"],
-                skymaps[s0]["azmt"],
-                skymaps[s0]["elev"],
-                skymaps[s1]["site_lat"],
-                skymaps[s1]["site_lon"],
-                skymaps[s1]["azmt"],
-                skymaps[s1]["elev"],
-            )
-            skymaps[s0]["extra_masks"][s1] = m0
-
 
 def build_site_sampler(skymaps, site):
     lat_grid = skymaps[site]["lat"]
@@ -102,22 +83,31 @@ def build_combined_profile(sample_lats, sample_lons, imgs_raw, samplers, selecte
     return best_brightness, best_site
 
 
-def build_traj_axis_projector(sample_lats, sample_lons):
-    """Project mapped lat/lon positions onto the resampled along-track sample index."""
-    mean_lat = np.deg2rad(np.nanmean(sample_lats))
-    coords = np.column_stack((sample_lons * np.cos(mean_lat), sample_lats))
-    return {
-        "tree": cKDTree(coords),
-        "cos_lat": np.cos(mean_lat),
-    }
+def build_flight_time_line(times, launch_dt, traj_lookup):
+    """Return flight-time values for plotting, masked outside the trajectory file range."""
+    traj_times = np.asarray(traj_lookup["times"], dtype=float)
+    if traj_times.size == 0:
+        return np.full(len(times), np.nan, dtype=float)
+    line = np.array([(t - launch_dt).total_seconds() for t in times], dtype=float)
+    valid = (line >= float(traj_times[0])) & (line <= float(traj_times[-1]))
+    line[~valid] = np.nan
+    return line
 
 
-def project_position_to_traj_index(projector, lat, lon):
-    """Return the nearest resampled trajectory sample index for a mapped position."""
-    if lat is None or lon is None:
-        return np.nan
-    _distance, idx = projector["tree"].query([lon * projector["cos_lat"], lat], k=1)
-    return float(idx)
+def compute_flight_time_bounds(start_dt, end_dt, launch_dt, traj_lookup):
+    """Return flight-time y-bounds cropped independently by requested start/end when in-flight."""
+    traj_times = np.asarray(traj_lookup["times"], dtype=float)
+    if traj_times.size == 0:
+        raise ValueError("trajectory lookup has no time samples")
+    y_min = float(traj_times[0])
+    y_max = float(traj_times[-1])
+    req_start = (start_dt - launch_dt).total_seconds()
+    req_end = (end_dt - launch_dt).total_seconds()
+    if y_min <= req_start <= y_max:
+        y_min = req_start
+    if y_min <= req_end <= y_max:
+        y_max = req_end
+    return y_min, y_max
 
 
 def main():
@@ -126,7 +116,7 @@ def main():
     ap.add_argument("--start", required=True, help="Start time HHMMSS(.fraction)")
     ap.add_argument("--end", required=True, help="End time HHMMSS(.fraction)")
     ap.add_argument("--step", type=float, default=0.3, help="Step size in seconds")
-    ap.add_argument("--samples", type=int, default=480, help="Number of equal-distance samples along each trajectory")
+    ap.add_argument("--samples", type=int, default=480, help="Number of equal-time samples along each trajectory")
     ap.add_argument("--sites", nargs="*", default=["ARV", "BVR", "VEE"], help="Sites to merge into the keogram")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--output", default=None, help="Output PNG path")
@@ -152,7 +142,7 @@ def main():
 
     selected_sites = [s.upper() for s in args.sites]
     skymaps = load_skymaps(set(selected_sites), color=args.color)
-    build_intersection_masks(skymaps)
+    build_overlap_masks(skymaps)
     samplers = {site: build_site_sampler(skymaps, site) for site in selected_sites if site in skymaps}
 
     tiff_overrides = {"ARV": args.arv_tiffs, "VEE": args.vee_tiffs, "BVR": args.bvr_tiffs}
@@ -163,18 +153,14 @@ def main():
             candidates = get_site_tiff_candidates(site, args.date, args.color, tiff_overrides[site])
             tiff_metadata[site] = build_tiff_metadata(candidates, frame_interval)
 
-    left_traj = build_traj_lookup("36.397_AttitudeSolution.csv")
-    right_traj = build_traj_lookup("36.398_AttitudeSolution.csv")
-    left_lats, left_lons, _left_s = resample_traj_by_distance(left_traj, args.samples)
-    right_lats, right_lons, _right_s = resample_traj_by_distance(right_traj, args.samples)
-    left_projector = build_traj_axis_projector(left_lats, left_lons)
-    right_projector = build_traj_axis_projector(right_lats, right_lons)
+    left_traj = build_traj_lookup(str(LEFT_TRAJECTORY_PATH))
+    right_traj = build_traj_lookup(str(RIGHT_TRAJECTORY_PATH))
+    left_lats, left_lons, left_flight_times = resample_traj_by_time(left_traj, args.samples)
+    right_lats, right_lons, right_flight_times = resample_traj_by_time(right_traj, args.samples)
 
     times = []
     left_cols = []
     right_cols = []
-    left_line = []
-    right_line = []
     step_td = dt.timedelta(seconds=args.step)
     t = start_dt
     frame_idx = 0
@@ -196,12 +182,8 @@ def main():
 
         left_profile, _left_site = build_combined_profile(left_lats, left_lons, imgs_raw, samplers, selected_sites)
         right_profile, _right_site = build_combined_profile(right_lats, right_lons, imgs_raw, samplers, selected_sites)
-        left_pos = lookup_traj_position(left_traj, time_arg)
-        right_pos = lookup_traj_position(right_traj, time_arg)
         left_cols.append(left_profile)
         right_cols.append(right_profile)
-        left_line.append(project_position_to_traj_index(left_projector, *left_pos))
-        right_line.append(project_position_to_traj_index(right_projector, *right_pos))
         times.append(t)
 
         frame_idx += 1
@@ -224,40 +206,57 @@ def main():
 
     output_path = build_output_path(args.output, args.date, args.start, args.end, args.color)
     fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=True, constrained_layout=True)
-    extent = [mdates.date2num(times[0]), mdates.date2num(times[-1]), 0, args.samples]
+    left_launch_start = get_launch_start_from_traj_csv(str(LEFT_TRAJECTORY_PATH))
+    right_launch_start = get_launch_start_from_traj_csv(str(RIGHT_TRAJECTORY_PATH))
+    left_launch_dt = parse_date_and_time(args.date, left_launch_start)
+    right_launch_dt = parse_date_and_time(args.date, right_launch_start)
     log_norm = mpl.colors.LogNorm(vmin=max(vmin, 1e-6), vmax=max(vmax, max(vmin, 1e-6) * 1.0001))
 
     panels = [
         (
             axes[0],
             left_img,
-            np.asarray(left_line, dtype=float),
+            left_flight_times,
+            build_flight_time_line(times, left_launch_dt, left_traj),
+            compute_flight_time_bounds(start_dt, end_dt, left_launch_dt, left_traj),
             "36.397 Trajectory Keogram",
-            get_launch_start_from_traj_csv("36.397_AttitudeSolution.csv"),
+            left_launch_start,
         ),
         (
             axes[1],
             right_img,
-            np.asarray(right_line, dtype=float),
+            right_flight_times,
+            build_flight_time_line(times, right_launch_dt, right_traj),
+            compute_flight_time_bounds(start_dt, end_dt, right_launch_dt, right_traj),
             "36.398 Trajectory Keogram",
-            get_launch_start_from_traj_csv("36.398_AttitudeSolution.csv"),
+            right_launch_start,
         ),
     ]
     image_handle = None
     time_nums = mdates.date2num(times)
-    for ax, img, line_y, title, launch_start in panels:
+    x_min = mdates.date2num(start_dt)
+    x_max = mdates.date2num(end_dt)
+    for ax, img, flight_times, line_y, y_bounds, title, launch_start in panels:
+        y_min, y_max = y_bounds
+        start_idx = int(np.searchsorted(flight_times, y_min, side="left"))
+        end_idx = int(np.searchsorted(flight_times, y_max, side="right"))
+        start_idx = max(0, min(start_idx, len(flight_times) - 1))
+        end_idx = max(start_idx + 1, min(end_idx, len(flight_times)))
+        img_to_plot = img[start_idx:end_idx, :]
+        flight_times_to_plot = flight_times[start_idx:end_idx]
+        extent = [x_min, x_max, float(y_min), float(y_max)]
         image_handle = ax.imshow(
-            img,
+            img_to_plot,
             origin="lower",
             aspect="auto",
             extent=extent,
-            cmap="viridis",
+            cmap="Greens",
             norm=log_norm,
         )
         t0_label = format_time_label(launch_start) if launch_start else "unknown"
         ax.set_title(f"{title} | T0 {t0_label}")
-        ax.set_ylabel("Distance-Along-Trajectory Sample")
-        valid_line = np.isfinite(line_y)
+        ax.set_ylabel("Flight Time Since Launch (s)")
+        valid_line = np.isfinite(line_y) & (line_y >= y_min) & (line_y <= y_max)
         if np.any(valid_line):
             ax.plot(
                 time_nums[valid_line],
@@ -268,17 +267,12 @@ def main():
                 label="Rocket trajectory",
             )
             ax.legend(loc="upper right")
+        ax.set_ylim(float(y_min), float(y_max))
 
     axes[-1].set_xlabel("Time UTC")
     minute_locator = mdates.MinuteLocator(interval=1)
     axes[-1].xaxis.set_major_locator(minute_locator)
-    axes[-1].xaxis.set_major_formatter(
-        FuncFormatter(
-            lambda value, _pos: mdates.num2date(value).strftime("%H:%M")
-            if mdates.num2date(value).minute % 5 == 0
-            else ""
-        )
-    )
+    axes[-1].xaxis.set_major_formatter(FuncFormatter(lambda value, _pos: mdates.num2date(value).strftime("%H:%M")))
 
     cbar = fig.colorbar(image_handle, ax=axes, orientation="vertical", shrink=0.95)
     cbar.set_label(f"{args.color.capitalize()} Channel Intensity")
