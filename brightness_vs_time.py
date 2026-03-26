@@ -80,16 +80,13 @@ def main():
     ap.add_argument("--date", default="20260210", help="Date YYYYMMDD")
     ap.add_argument("--start", required=True, help="Start time HHMMSS(.fraction)")
     ap.add_argument("--end", required=True, help="End time HHMMSS(.fraction)")
-    ap.add_argument("--step", type=float, default=0.3, help="Step size in seconds (default: 0.3)")
+    ap.add_argument("--step", type=float, default=0.05, help="Step size in seconds (default: 0.3)")
     ap.add_argument("--sites", nargs="*", default=["ARV", "BVR", "VEE", "PKR"], help="Sites to include")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--output", default=None, help="Output CSV path")
     ap.add_argument("--plot-output", default=None, help="Optional output PNG path for the brightness plot")
     ap.add_argument("--plot-title", default=None, help="Optional plot title")
     ap.add_argument("--no-plot", action="store_true", help="Write the CSV only and skip the PNG plot")
-    ap.add_argument("--arv-tiffs", nargs="*", default=None, help="Optional ARV TIFF folder(s)")
-    ap.add_argument("--vee-tiffs", nargs="*", default=None, help="Optional VEE TIFF folder(s)")
-    ap.add_argument("--bvr-tiffs", nargs="*", default=None, help="Optional BVR TIFF folder(s)")
     args = ap.parse_args()
 
     try:
@@ -110,16 +107,11 @@ def main():
 
     build_overlap_masks(skymaps)
 
-    tiff_overrides = {
-        "ARV": args.arv_tiffs,
-        "VEE": args.vee_tiffs,
-        "BVR": args.bvr_tiffs,
-    }
     tiff_candidates = {}
     tiff_metadata = {}
     for site in ["ARV", "VEE", "BVR"]:
         if site in selected_sites:
-            tiff_candidates[site] = get_site_tiff_candidates(site, args.date, args.color, tiff_overrides[site])
+            tiff_candidates[site] = get_site_tiff_candidates(site, args.date, args.color)
 
     frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
     for site in ["ARV", "VEE", "BVR"]:
