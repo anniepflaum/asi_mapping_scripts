@@ -1,3 +1,4 @@
+import csv
 from inspect import currentframe
 
 import cartopy.crs as ccrs
@@ -9,10 +10,18 @@ import numpy as np
 
 import magcoordmap as mcm
 from core.brightness import best_rocket_brightness
-from core.paths import COAST_LAT_PATH, COAST_LON_PATH, LEFT_TRAJECTORY_PATH, RIGHT_TRAJECTORY_PATH
+from core.calc_ipp import calc_ipp
+from core.paths import COAST_LAT_PATH, COAST_LON_PATH, LEFT_TRAJECTORY_PATH, RECEIVERS_PATH, RIGHT_TRAJECTORY_PATH
 from core.plot_norm import choose_image_cmap, compute_linear_image_limits, compute_log_image_limits
 from core.time_utils import format_time_label, sanitize_time_for_filename
-from core.traj_utils import format_time_since_launch, get_launch_start_from_traj_csv, load_traj
+from core.traj_utils import (
+    build_traj_lookup,
+    format_time_since_launch,
+    get_launch_start_from_traj_csv,
+    load_traj,
+    lookup_traj_geodetic_position,
+    mapped_apex_height,
+)
 
 
 def scale_uv(lon, lat, u, v):
@@ -29,9 +38,69 @@ def channel_label(color):
     return "Red Channel Intensity" if str(color).lower() == "red" else "Green Channel Intensity"
 
 
-def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis"):
+def load_receivers(path=RECEIVERS_PATH):
+    with open(path, "r", encoding="utf-8", newline="") as fd:
+        reader = csv.DictReader(fd)
+        return [
+            {
+                "name": row["Name"].strip(),
+                "acronym": row["acronym"].strip(),
+                "lon": float(row["Lon"]),
+                "lat": float(row["Lat"]),
+                "alt_m": float(row.get("Alt_m", 0.0) or 0.0),
+            }
+            for row in reader
+            if row.get("Lon") and row.get("Lat")
+        ]
+
+
+def plot_receivers_fast(ax, receivers):
+    if not receivers:
+        return
+    lons = [receiver["lon"] for receiver in receivers]
+    lats = [receiver["lat"] for receiver in receivers]
+    ax.scatter(lons, lats, marker="^", s=45, color="white", edgecolors="black", linewidths=0.8, zorder=9, label="Receivers")
+    for receiver in receivers:
+        ax.text(receiver["lon"] + 0.12, receiver["lat"] + 0.05, receiver["acronym"], fontsize=8, color="black", zorder=10, bbox=dict(facecolor="white", alpha=0.7, edgecolor="none", pad=0.15))
+
+
+def plot_receivers_pretty(ax, receivers):
+    if not receivers:
+        return
+    lons = [receiver["lon"] for receiver in receivers]
+    lats = [receiver["lat"] for receiver in receivers]
+    ax.scatter(lons, lats, marker="^", s=45, color="white", edgecolors="black", linewidths=0.8, zorder=9, label="Receivers", transform=ccrs.PlateCarree())
+    for receiver in receivers:
+        ax.text(receiver["lon"] + 0.12, receiver["lat"] + 0.05, receiver["acronym"], fontsize=8, color="black", zorder=10, transform=ccrs.PlateCarree(), bbox=dict(facecolor="white", alpha=0.7, edgecolor="none", pad=0.15))
+
+
+def compute_receiver_ipps(receivers, rocket_geo, ipp_height_km):
+    if not receivers or rocket_geo[0] is None or rocket_geo[1] is None or rocket_geo[2] is None:
+        return []
+
+    rocket_position = [rocket_geo[0], rocket_geo[1], rocket_geo[2] * 1000.0]
+    ipps = []
+    for receiver in receivers:
+        ipp_lat, ipp_lon = calc_ipp(
+            [receiver["lat"], receiver["lon"], receiver.get("alt_m", 0.0)],
+            rocket_position,
+            rockcoords="geo",
+            height=ipp_height_km,
+        )
+        ipps.append(
+            {
+                "acronym": receiver["acronym"],
+                "lat": float(ipp_lat),
+                "lon": float(ipp_lon),
+            }
+        )
+    return ipps
+
+
+def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", plot_receivers=False):
     coastlons = np.loadtxt(COAST_LON_PATH)
     coastlats = np.loadtxt(COAST_LAT_PATH)
+    receivers = load_receivers()
     fig = plt.figure(figsize=(15, 10))
     gs = gridspec.GridSpec(4, 4, width_ratios=[4, 0.2, 0.2, 1])
     ax = fig.add_subplot(gs[:, 0])
@@ -93,8 +162,13 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
             im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, norm=image_norm)
             ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, norm=image_norm)
 
-    lat1, lon1, latm1, lonm1, _lata1, _lona1, lat_map1, lon_map1 = load_traj(str(LEFT_TRAJECTORY_PATH), map_time=map_time)
-    lat2, lon2, latm2, lonm2, _lata2, _lona2, lat_map2, lon_map2 = load_traj(str(RIGHT_TRAJECTORY_PATH), map_time=map_time)
+    lat1, lon1, latm1, lonm1, _lata1, _lona1, lat_map1, lon_map1 = load_traj(str(LEFT_TRAJECTORY_PATH), map_time=map_time, color=color)
+    lat2, lon2, latm2, lonm2, _lata2, _lona2, lat_map2, lon_map2 = load_traj(str(RIGHT_TRAJECTORY_PATH), map_time=map_time, color=color)
+    left_geo = lookup_traj_geodetic_position(build_traj_lookup(str(LEFT_TRAJECTORY_PATH), color=color), map_time)
+    right_geo = lookup_traj_geodetic_position(build_traj_lookup(str(RIGHT_TRAJECTORY_PATH), color=color), map_time)
+    ipp_height_km = mapped_apex_height(color)
+    left_ipps = compute_receiver_ipps(receivers, left_geo, ipp_height_km)
+    right_ipps = compute_receiver_ipps(receivers, right_geo, ipp_height_km)
     ax.plot(lon1, lat1, color="red", label="GNEISS trajectory", zorder=7)
     ax.scatter(lonm1, latm1, color="red", s=15, zorder=7)
     ax.plot(lon2, lat2, color="red", zorder=7)
@@ -103,6 +177,50 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
         ax.scatter(lon_map1, lat_map1, color="orange", s=50, marker="o", zorder=8, label="Position at map time")
     if lat_map2 is not None and lon_map2 is not None:
         ax.scatter(lon_map2, lat_map2, color="orange", s=50, marker="o", zorder=8)
+    if left_ipps:
+        ax.scatter(
+            [ipp["lon"] for ipp in left_ipps],
+            [ipp["lat"] for ipp in left_ipps],
+            marker="x",
+            s=45,
+            color="deepskyblue",
+            linewidths=1.4,
+            zorder=11,
+            label="397 IPP",
+        )
+        for ipp in left_ipps:
+            ax.text(
+                ipp["lon"] + 0.1,
+                ipp["lat"] + 0.03,
+                ipp["acronym"],
+                fontsize=7,
+                color="deepskyblue",
+                zorder=12,
+                bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=0.12),
+            )
+    if right_ipps:
+        ax.scatter(
+            [ipp["lon"] for ipp in right_ipps],
+            [ipp["lat"] for ipp in right_ipps],
+            marker="x",
+            s=45,
+            color="magenta",
+            linewidths=1.4,
+            zorder=11,
+            label="398 IPP",
+        )
+        for ipp in right_ipps:
+            ax.text(
+                ipp["lon"] + 0.1,
+                ipp["lat"] - 0.08,
+                ipp["acronym"],
+                fontsize=7,
+                color="magenta",
+                zorder=12,
+                bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=0.12),
+            )
+    if plot_receivers:
+        plot_receivers_fast(ax, receivers)
 
     bright1 = None
     bright2 = None
@@ -144,9 +262,9 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     cbar.set_label(channel_label(color))
     marker_specs = []
     if bright1 is not None:
-        marker_specs.append(("L", bright1))
+        marker_specs.append(("397", bright1))
     if bright2 is not None:
-        marker_specs.append(("R", bright2))
+        marker_specs.append(("398", bright2))
     for tag, bright in marker_specs:
         y = np.clip(bright["percentile"] / 100.0, 0.0, 1.0)
         cbar.ax.plot([0.0, 1.0], [y, y], transform=cbar.ax.transAxes, color="black", linewidth=4.0, zorder=1000, solid_capstyle="butt", clip_on=False)
@@ -163,7 +281,8 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_pretty(skymaps, imgs, pfisr, output_path=None, bounds=None, color="green", colorbar_scale="linear", colorbar_color="viridis", apex=None):
+def plot_pretty(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False):
+    receivers = load_receivers()
     proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
     fig = plt.figure(figsize=(15, 10))
     gs = gridspec.GridSpec(4, 4, width_ratios=[4, 0.2, 0.2, 1])
@@ -227,8 +346,13 @@ def plot_pretty(skymaps, imgs, pfisr, output_path=None, bounds=None, color="gree
             ax.tripcolor(lonf, latf, imf, transform=ccrs.PlateCarree(), cmap=image_cmap, norm=image_norm)
 
     print("Trajectory")
-    lat1, lon1, latm1, lonm1, _lata1, _lona1, lat_map1, lon_map1 = load_traj(str(LEFT_TRAJECTORY_PATH))
-    lat2, lon2, latm2, lonm2, _lata2, _lona2, lat_map2, lon_map2 = load_traj(str(RIGHT_TRAJECTORY_PATH))
+    lat1, lon1, latm1, lonm1, _lata1, _lona1, lat_map1, lon_map1 = load_traj(str(LEFT_TRAJECTORY_PATH), map_time=map_time, color=color)
+    lat2, lon2, latm2, lonm2, _lata2, _lona2, lat_map2, lon_map2 = load_traj(str(RIGHT_TRAJECTORY_PATH), map_time=map_time, color=color)
+    left_geo = lookup_traj_geodetic_position(build_traj_lookup(str(LEFT_TRAJECTORY_PATH), color=color), map_time)
+    right_geo = lookup_traj_geodetic_position(build_traj_lookup(str(RIGHT_TRAJECTORY_PATH), color=color), map_time)
+    ipp_height_km = mapped_apex_height(color)
+    left_ipps = compute_receiver_ipps(receivers, left_geo, ipp_height_km)
+    right_ipps = compute_receiver_ipps(receivers, right_geo, ipp_height_km)
     ax.plot(lon1, lat1, color="red", label="GNEISS trajectory", transform=ccrs.PlateCarree(), zorder=7)
     ax.scatter(lonm1, latm1, color="red", s=15, transform=ccrs.PlateCarree(), zorder=7)
     ax.plot(lon2, lat2, color="red", transform=ccrs.PlateCarree(), zorder=7)
@@ -237,6 +361,54 @@ def plot_pretty(skymaps, imgs, pfisr, output_path=None, bounds=None, color="gree
         ax.scatter(lon_map1, lat_map1, color="orange", s=50, marker="o", zorder=8, label="Position at map time")
     if lat_map2 is not None and lon_map2 is not None:
         ax.scatter(lon_map2, lat_map2, color="orange", s=50, marker="o", zorder=8)
+    if left_ipps:
+        ax.scatter(
+            [ipp["lon"] for ipp in left_ipps],
+            [ipp["lat"] for ipp in left_ipps],
+            marker="x",
+            s=45,
+            color="deepskyblue",
+            linewidths=1.4,
+            zorder=11,
+            label="397 IPP",
+            transform=ccrs.PlateCarree(),
+        )
+        for ipp in left_ipps:
+            ax.text(
+                ipp["lon"] + 0.1,
+                ipp["lat"] + 0.03,
+                ipp["acronym"],
+                fontsize=7,
+                color="deepskyblue",
+                zorder=12,
+                transform=ccrs.PlateCarree(),
+                bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=0.12),
+            )
+    if right_ipps:
+        ax.scatter(
+            [ipp["lon"] for ipp in right_ipps],
+            [ipp["lat"] for ipp in right_ipps],
+            marker="x",
+            s=45,
+            color="magenta",
+            linewidths=1.4,
+            zorder=11,
+            label="398 IPP",
+            transform=ccrs.PlateCarree(),
+        )
+        for ipp in right_ipps:
+            ax.text(
+                ipp["lon"] + 0.1,
+                ipp["lat"] - 0.08,
+                ipp["acronym"],
+                fontsize=7,
+                color="magenta",
+                zorder=12,
+                transform=ccrs.PlateCarree(),
+                bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=0.12),
+            )
+    if plot_receivers:
+        plot_receivers_pretty(ax, receivers)
 
     frame = currentframe()
     args = frame.f_back.f_locals.get("args", None)
