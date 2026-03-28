@@ -13,12 +13,15 @@ For each time step in a requested range, this script:
 import argparse
 import csv
 import datetime as dt
+import re
 from pathlib import Path
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+import tifffile
 
 from core.brightness import best_rocket_brightness
+from core.calc_ipp import calc_ipp
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
 from core.remote_data import retrieve_image
@@ -29,9 +32,9 @@ from core.time_utils import (
     sanitize_time_for_filename,
 )
 from core.fetch_url import closest_amisr_png_url
-from core.paths import LEFT_TRAJECTORY_PATH, RIGHT_TRAJECTORY_PATH
-from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates, load_best_frame_from_cached_tiffs
-from core.traj_utils import build_traj_lookup, lookup_traj_position
+from core.paths import LEFT_TRAJECTORY_PATH, RECEIVERS_PATH, RIGHT_TRAJECTORY_PATH
+from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
+from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, lookup_traj_position
 
 
 def format_time_arg(t):
@@ -46,7 +49,7 @@ def make_output_path(out_arg, date, start, end, step):
     start_tok = sanitize_time_for_filename(start)
     end_tok = sanitize_time_for_filename(end)
     step_tok = str(step).replace(".", "p")
-    return Path(f"brightness_vs_time_{date}_{start_tok}_{end_tok}_step{step_tok}.csv")
+    return Path(f"brightness_vs_time_{start_tok}_{end_tok}_step{step_tok}.csv")
 
 
 def make_plot_output_path(csv_path, output_arg):
@@ -55,12 +58,34 @@ def make_plot_output_path(csv_path, output_arg):
     return Path(csv_path).with_suffix(".png")
 
 
-def plot_brightness_timeseries(times, left, right, output_path, title):
+def make_receiver_output_path(csv_path):
+    return csv_path.with_name(f"{csv_path.stem}_receiver_ipps.csv")
+
+
+def plot_brightness_timeseries(times, left, right, output_path, title, left_site_changes=None, right_site_changes=None):
     if not times:
         raise ValueError("No rows with iso_time were collected")
     fig, ax = plt.subplots(figsize=(12, 5))
     ax.scatter(times, left, color="tab:red", s=10, label="397 brightness")
     ax.scatter(times, right, color="tab:blue", s=10, label="398 brightness")
+    for idx, change_time in enumerate(left_site_changes or []):
+        ax.axvline(
+            change_time,
+            color="tab:red",
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.5,
+            label="397 frame site change" if idx == 0 else None,
+        )
+    for idx, change_time in enumerate(right_site_changes or []):
+        ax.axvline(
+            change_time,
+            color="tab:blue",
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.5,
+            label="398 frame site change" if idx == 0 else None,
+        )
     ax.set_title(title)
     ax.set_xlabel("Time")
     ax.set_ylabel("Brightness")
@@ -74,6 +99,95 @@ def plot_brightness_timeseries(times, left, right, output_path, title):
     plt.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"Saved plot to {output_path}")
+
+
+def parse_frame_datetime_from_url(url):
+    match = re.search(r"(\d{8})_(\d{6})", url)
+    if not match:
+        raise ValueError(f"Could not parse frame timestamp from URL: {url}")
+    return dt.datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S")
+
+
+def load_tiff_frame_with_metadata(site, tiff_metadata, target_dt, frame_interval):
+    if not tiff_metadata:
+        raise FileNotFoundError(f"No TIFF files found for {site}")
+
+    candidates = []
+    for meta in tiff_metadata:
+        raw_idx = int(round((target_dt - meta["start_dt"]).total_seconds() / frame_interval))
+        idx = min(max(raw_idx, 0), meta["n_frames"] - 1)
+        frame_dt = meta["start_dt"] + dt.timedelta(seconds=idx * frame_interval)
+        candidates.append(
+            {
+                "path": meta["path"],
+                "idx": idx,
+                "frame_dt": frame_dt,
+                "delta_s": abs((frame_dt - target_dt).total_seconds()),
+                "in_range": meta["start_dt"] <= target_dt <= meta["end_dt"],
+            }
+        )
+
+    in_range_candidates = [c for c in candidates if c["in_range"]]
+    best = min(in_range_candidates or candidates, key=lambda c: c["delta_s"])
+
+    with tifffile.TiffFile(best["path"]) as tif:
+        im = tif.pages[best["idx"]].asarray()
+    if im.ndim == 3:
+        im = im[:, :, 0]
+    return im.astype("float32"), {"site": site, "frame_time": best["frame_dt"].isoformat()}
+
+
+def get_site_change_times(rows, fieldname):
+    change_times = []
+    previous_value = None
+    first_row = True
+    for row in rows:
+        current_value = row[fieldname]
+        if first_row:
+            previous_value = current_value
+            first_row = False
+            continue
+        if current_value != previous_value:
+            change_times.append(dt.datetime.fromisoformat(row["time"]))
+        previous_value = current_value
+    return change_times
+
+
+def load_receivers(path=RECEIVERS_PATH):
+    with open(path, "r", encoding="utf-8", newline="") as fd:
+        reader = csv.DictReader(fd)
+        return [
+            {
+                "name": row["Name"].strip(),
+                "acronym": row["acronym"].strip(),
+                "lat": float(row["Lat"]),
+                "lon": float(row["Lon"]),
+                "alt_m": 0.0,
+            }
+            for row in reader
+            if row.get("Lat") and row.get("Lon")
+        ]
+
+
+def sample_receiver_ipp_brightnesses(receivers, rocket_geo, skymaps, imgs_raw, ipp_height_km=110.0):
+    brightnesses = []
+    sites = []
+    if rocket_geo[0] is None or rocket_geo[1] is None or rocket_geo[2] is None:
+        return [None] * len(receivers), [""] * len(receivers)
+
+    rocket_lat, rocket_lon, rocket_alt_km = rocket_geo
+    rocket_position = [rocket_lat, rocket_lon, rocket_alt_km * 1000.0]
+    for receiver in receivers:
+        ipp_lat, ipp_lon = calc_ipp(
+            [receiver["lat"], receiver["lon"], receiver["alt_m"]],
+            rocket_position,
+            rockcoords="geo",
+            height=ipp_height_km,
+        )
+        sample = best_rocket_brightness(ipp_lat, ipp_lon, skymaps, imgs_raw)
+        brightnesses.append(sample["raw_brightness"] if sample else None)
+        sites.append(sample["site"] if sample else "")
+    return brightnesses, sites
 
 def main():
     ap = argparse.ArgumentParser()
@@ -103,6 +217,7 @@ def main():
         ap.error("--end must be >= --start")
 
     selected_sites = set(s.upper() for s in args.sites)
+    receivers = load_receivers()
     skymaps = load_skymaps(selected_sites, color=args.color)
 
     build_overlap_masks(skymaps)
@@ -118,31 +233,33 @@ def main():
         if site in tiff_candidates:
             tiff_metadata[site] = build_tiff_metadata(tiff_candidates[site], frame_interval)
 
-    left_traj = build_traj_lookup(str(LEFT_TRAJECTORY_PATH))
-    right_traj = build_traj_lookup(str(RIGHT_TRAJECTORY_PATH))
+    left_traj = build_traj_lookup(str(LEFT_TRAJECTORY_PATH), color=args.color)
+    right_traj = build_traj_lookup(str(RIGHT_TRAJECTORY_PATH), color=args.color)
 
     out_path = make_output_path(args.output, args.date, args.start, args.end, args.step)
     if not out_path.is_absolute():
         out_path = Path("..") / "mapped" / args.color / out_path
 
     fieldnames = [
-        "date",
         "time",
-        "iso_time",
-        "left_site",
+        "left_frame_site",
+        "left_frame_time",
         "left_percentile",
         "left_brightness",
-        "left_distance_deg",
-        "left_n_pixels",
-        "right_site",
+        "right_frame_site",
+        "right_frame_time",
         "right_percentile",
         "right_brightness",
-        "right_distance_deg",
-        "right_n_pixels",
-        "sites_loaded",
     ]
+    receiver_fieldnames = ["time"]
+    for rocket_label in ["397", "398"]:
+        for receiver in receivers:
+            acronym = receiver["acronym"]
+            receiver_fieldnames.append(f"{rocket_label}_{acronym}_ipp_brightness")
+            receiver_fieldnames.append(f"{rocket_label}_{acronym}_ipp_site")
 
     rows = []
+    receiver_rows = []
     plot_times = []
     plot_left = []
     plot_right = []
@@ -151,18 +268,20 @@ def main():
     while t <= end_dt:
         time_arg = format_time_arg(t)
         imgs_raw = {}
+        frame_info = {}
 
         for site in ["ARV", "VEE", "BVR"]:
             if site not in selected_sites:
                 continue
             try:
-                im_raw = load_best_frame_from_cached_tiffs(
+                im_raw, site_frame_info = load_tiff_frame_with_metadata(
                     site,
                     tiff_metadata.get(site, []),
                     t,
                     frame_interval=frame_interval,
                 )
                 imgs_raw[site] = im_raw
+                frame_info[site] = site_frame_info
             except Exception as exc:
                 print(f"{time_arg} {site}: frame load failed: {exc}")
 
@@ -171,36 +290,46 @@ def main():
                 pkr_lookup_time = t.strftime("%H%M%S")
                 url_pkr = closest_amisr_png_url("PKR", args.date, pkr_lookup_time, color=args.color)
                 imgs_raw["PKR"] = retrieve_image(url_pkr)
+                frame_info["PKR"] = {"site": "PKR", "frame_time": parse_frame_datetime_from_url(url_pkr).isoformat()}
             except Exception as exc:
                 print(f"{time_arg} PKR: frame load failed: {exc}")
 
         lat_l, lon_l = lookup_traj_position(left_traj, time_arg)
         lat_r, lon_r = lookup_traj_position(right_traj, time_arg)
+        left_geo = lookup_traj_geodetic_position(left_traj, time_arg)
+        right_geo = lookup_traj_geodetic_position(right_traj, time_arg)
 
         left = best_rocket_brightness(lat_l, lon_l, skymaps, imgs_raw) if lat_l is not None and lon_l is not None else None
         right = best_rocket_brightness(lat_r, lon_r, skymaps, imgs_raw) if lat_r is not None and lon_r is not None else None
+        left_receiver_brightnesses, left_receiver_sites = sample_receiver_ipp_brightnesses(receivers, left_geo, skymaps, imgs_raw)
+        right_receiver_brightnesses, right_receiver_sites = sample_receiver_ipp_brightnesses(receivers, right_geo, skymaps, imgs_raw)
 
         plot_times.append(t)
         plot_left.append(left["raw_brightness"] if left else None)
         plot_right.append(right["raw_brightness"] if right else None)
         rows.append(
             {
-                "date": args.date,
-                "time": time_arg,
-                "iso_time": t.isoformat(),
-                "left_site": left["site"] if left else "",
+                "time": t.isoformat(),
+                "left_frame_site": frame_info[left["site"]]["site"] if left and left["site"] in frame_info else "",
+                "left_frame_time": frame_info[left["site"]]["frame_time"] if left and left["site"] in frame_info else "",
                 "left_percentile": f"{left['percentile']:.3f}" if left else "",
                 "left_brightness": f"{left['raw_brightness']:.3f}" if left else "",
-                "left_distance_deg": f"{left['distance_deg']:.6f}" if left else "",
-                "left_n_pixels": left["n_pixels"] if left else "",
-                "right_site": right["site"] if right else "",
+                "right_frame_site": frame_info[right["site"]]["site"] if right and right["site"] in frame_info else "",
+                "right_frame_time": frame_info[right["site"]]["frame_time"] if right and right["site"] in frame_info else "",
                 "right_percentile": f"{right['percentile']:.3f}" if right else "",
                 "right_brightness": f"{right['raw_brightness']:.3f}" if right else "",
-                "right_distance_deg": f"{right['distance_deg']:.6f}" if right else "",
-                "right_n_pixels": right["n_pixels"] if right else "",
-                "sites_loaded": ",".join(sorted(imgs_raw.keys())),
             }
         )
+        receiver_row = {"time": t.isoformat()}
+        for receiver, brightness, site_name in zip(receivers, left_receiver_brightnesses, left_receiver_sites):
+            acronym = receiver["acronym"]
+            receiver_row[f"397_{acronym}_ipp_brightness"] = f"{brightness:.3f}" if brightness is not None else ""
+            receiver_row[f"397_{acronym}_ipp_site"] = site_name
+        for receiver, brightness, site_name in zip(receivers, right_receiver_brightnesses, right_receiver_sites):
+            acronym = receiver["acronym"]
+            receiver_row[f"398_{acronym}_ipp_brightness"] = f"{brightness:.3f}" if brightness is not None else ""
+            receiver_row[f"398_{acronym}_ipp_site"] = site_name
+        receiver_rows.append(receiver_row)
         t += step_td
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -208,12 +337,28 @@ def main():
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+    receiver_out_path = make_receiver_output_path(out_path)
+    with receiver_out_path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=receiver_fieldnames)
+        writer.writeheader()
+        writer.writerows(receiver_rows)
 
     print(f"Wrote {len(rows)} rows to {out_path}")
+    print(f"Wrote {len(receiver_rows)} rows to {receiver_out_path}")
     if not args.no_plot:
+        left_site_changes = get_site_change_times(rows, "left_frame_site")
+        right_site_changes = get_site_change_times(rows, "right_frame_site")
         plot_output = make_plot_output_path(out_path, args.plot_output)
         plot_title = args.plot_title or f"Brightness vs Time ({args.color})"
-        plot_brightness_timeseries(plot_times, plot_left, plot_right, plot_output, plot_title)
+        plot_brightness_timeseries(
+            plot_times,
+            plot_left,
+            plot_right,
+            plot_output,
+            plot_title,
+            left_site_changes=left_site_changes,
+            right_site_changes=right_site_changes,
+        )
 
 
 if __name__ == "__main__":

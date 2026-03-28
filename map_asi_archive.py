@@ -68,6 +68,7 @@ def main():
     )
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling for ASI intensity")
     ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
+    ap.add_argument("--plot-receivers", action="store_true", help="Plot receiver locations from receivers.csv on the map")
     args = ap.parse_args()
     try:
         parse_hhmmss_fractional(args.time)
@@ -154,11 +155,14 @@ def main():
                 imgs,
                 pfisr,
                 output_path=output_path,
+                map_time=args.time,
                 bounds=args.bounds,
                 color=args.color,
                 colorbar_scale=args.colorbar_scale,
                 colorbar_color=args.colorbar_color,
-                apex=apex)
+                apex=apex,
+                plot_receivers=args.plot_receivers,
+            )
         else:
             plot_fast(
                 skymaps,
@@ -172,6 +176,7 @@ def main():
                 norm_limits=fixed_norm_limits,
                 colorbar_scale=args.colorbar_scale,
                 colorbar_color=args.colorbar_color,
+                plot_receivers=args.plot_receivers,
             )
 
     tocall = time.time()
