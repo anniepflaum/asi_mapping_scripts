@@ -153,8 +153,8 @@ def main():
             candidates = get_site_tiff_candidates(site, args.date, args.color, tiff_overrides[site])
             tiff_metadata[site] = build_tiff_metadata(candidates, frame_interval)
 
-    left_traj = build_traj_lookup(str(LEFT_TRAJECTORY_PATH))
-    right_traj = build_traj_lookup(str(RIGHT_TRAJECTORY_PATH))
+    left_traj = build_traj_lookup(str(LEFT_TRAJECTORY_PATH), color=args.color)
+    right_traj = build_traj_lookup(str(RIGHT_TRAJECTORY_PATH), color=args.color)
     left_lats, left_lons, left_flight_times = resample_traj_by_time(left_traj, args.samples)
     right_lats, right_lons, right_flight_times = resample_traj_by_time(right_traj, args.samples)
 

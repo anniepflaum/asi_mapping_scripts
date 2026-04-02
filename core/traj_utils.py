@@ -19,6 +19,11 @@ LON_COLUMN = "Longitude"
 ALT_COLUMN = "Altitude (km)"
 
 
+def mapped_apex_height(color="green"):
+    """Return the target apex mapping height for a given ASI color."""
+    return 200.0 if str(color).lower() == "red" else 110.0
+
+
 def parse_gps_utc_time(value):
     """Parse GPS-export UTC time token 'DDD HH:MM:SS.sss' into seconds since midnight."""
     m = GPS_TIME_RE.fullmatch(str(value).strip())
@@ -78,16 +83,16 @@ def format_time_since_launch(map_time, launch_start):
     return f"T{rel_sec:+.1f} s"
 
 
-def load_traj(filename, map_time=None):
+def load_traj(filename, map_time=None, color="green"):
     """
     Load rocket trajectory from a GPS export CSV.
-    Map lat/lon to 110 km altitude and optionally return the nearest map-time point.
+    Map lat/lon to the color-specific altitude and optionally return the nearest map-time point.
     """
     if not filename.lower().endswith(".csv"):
         raise ValueError(f"Trajectory input must be a GPS export CSV: {filename}")
     utc_times, flight_times, lats, lons, alts = load_traj_records(filename)
 
-    lats, lons, _ = apex.map_to_height(lats, lons, alts, 110.0)
+    lats, lons, _ = apex.map_to_height(lats, lons, alts, mapped_apex_height(color))
     idx = np.argwhere(np.isclose(flight_times % 60, 0.0, atol=0.05))
     latsm = lats[idx].squeeze()
     lonsm = lons[idx].squeeze()
@@ -113,16 +118,19 @@ def load_traj_times(filename):
     return flight_times
 
 
-def build_traj_lookup(traj_path):
+def build_traj_lookup(traj_path, color="green"):
     """Load and cache one trajectory for repeated nearest-time lookup."""
-    lats, lons, _latm, _lonm, _lata, _lona, _lat_map, _lon_map = load_traj(traj_path)
-    utc_times, flight_times, _raw_lats, _raw_lons, _raw_alts = load_traj_records(traj_path)
+    lats, lons, _latm, _lonm, _lata, _lona, _lat_map, _lon_map = load_traj(traj_path, color=color)
+    utc_times, flight_times, raw_lats, raw_lons, raw_alts = load_traj_records(traj_path)
     launch_start = get_launch_start_from_traj_csv(traj_path)
     return {
         "times": flight_times,
         "utc_times": utc_times,
         "lats": np.asarray(lats, dtype=float),
         "lons": np.asarray(lons, dtype=float),
+        "raw_lats": np.asarray(raw_lats, dtype=float),
+        "raw_lons": np.asarray(raw_lons, dtype=float),
+        "raw_alts_km": np.asarray(raw_alts, dtype=float),
         "launch_sec": hhmmss_fractional_to_seconds(launch_start) if launch_start else None,
         "path": traj_path,
     }
@@ -138,6 +146,22 @@ def lookup_traj_position(traj_lookup, map_time):
         return None, None
     idx = int(np.argmin(np.abs(utc_times - map_sec)))
     return float(traj_lookup["lats"][idx]), float(traj_lookup["lons"][idx])
+
+
+def lookup_traj_geodetic_position(traj_lookup, map_time):
+    """Return the raw geodetic lat/lon/alt trajectory point nearest a requested map time."""
+    if map_time is None:
+        return None, None, None
+    map_sec = hhmmss_fractional_to_seconds(map_time)
+    utc_times = np.asarray(traj_lookup["utc_times"], dtype=float)
+    if utc_times.size == 0 or map_sec < utc_times[0] or map_sec > utc_times[-1]:
+        return None, None, None
+    idx = int(np.argmin(np.abs(utc_times - map_sec)))
+    return (
+        float(traj_lookup["raw_lats"][idx]),
+        float(traj_lookup["raw_lons"][idx]),
+        float(traj_lookup["raw_alts_km"][idx]),
+    )
 
 
 def resample_traj_by_distance(traj_lookup, n_samples):
