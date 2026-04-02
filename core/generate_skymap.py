@@ -5,7 +5,6 @@ from astropy.io import fits
 from scipy.io import readsav
 import pymap3d as pm
 import h5py
-from skimage.transform import resize
 
 
 #def azel2geo(centlat, centlon, az, el, mapalt_km=110.):
@@ -123,22 +122,19 @@ def load_BVR():
 
 
 # Arctic Village
-def load_ARV():
+def load_ARV(color="green"):
     site_lon, site_lat = [-145.533,  68.127]
-    
 
-    azdat = readsav('../starmaps/ARV/ARV_GASI_20260209_063700_rot5_full_Az.sav', python_dict=True)
-    eldat = readsav('../starmaps/ARV/ARV_GASI_20260209_063700_rot5_full_El.sav', python_dict=True)
-    azmap = azdat[list(azdat.keys())[0]].copy()
-    elmap = eldat[list(eldat.keys())[0]].copy()
+    if color == "red":
+        azmap = fits.getdata('../starmaps/ARV/ARV_GASI_630_20260209_Az.FIT').copy()
+        elmap = fits.getdata('../starmaps/ARV/ARV_GASI_630_20260209_El.FIT').copy()
+    else:
+        azdat = readsav('../starmaps/ARV/ARV_GASI_20260209_063700_rot5_full_Az.sav', python_dict=True)
+        eldat = readsav('../starmaps/ARV/ARV_GASI_20260209_063700_rot5_full_El.sav', python_dict=True)
+        azmap = azdat[list(azdat.keys())[0]].copy()
+        elmap = eldat[list(eldat.keys())[0]].copy()
 
     mask = elmap < 15.
-  
-    # Downsample to 750x750 to match TIFF images
-    target_shape = (750, 750)
-    azmap = resize(azmap, target_shape, order=1, preserve_range=True, anti_aliasing=True)
-    elmap = resize(elmap, target_shape, order=1, preserve_range=True, anti_aliasing=True)
-    mask = resize(mask.astype(float), target_shape, order=0, preserve_range=True) > 0.5
 
     return site_lat, site_lon, azmap, elmap, mask
 
