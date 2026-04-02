@@ -6,6 +6,9 @@ Script for mapping and visualizing all-sky imager (ASI) data from multiple groun
 Processes local multi-page TIFFs for ARV, VEE, BVR, and fetches PKR images from the web.
 Selects frames by timestamp, normalizes intensities, overlays rocket trajectories, and saves unified output.
 
+This is a new test line with a LF ending.
+
+
 Usage:
     python map_asi_archive_3Hz.py --time HHMMSS.s --sites ARV BVR VEE PKR
 
