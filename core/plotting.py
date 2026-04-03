@@ -216,16 +216,17 @@ def setup_fast_axes(imgs, bounds):
     ax.set_aspect(2.2)
     ax.grid()
     ax1 = {}
+    axtrans1 = {}
     for i, site in enumerate(imgs.keys()):
         ax1[site] = fig.add_subplot(gs[i, -1])
-        #axtrans1[site] = ax1[site].transData
+        axtrans1[site] = ax1[site].transData
         ax1[site].plot(coastlons, coastlats, color="black")
         ax1[site].set_ylim(ymin=lat_min, ymax=lat_max)
         ax1[site].set_xlim(xmin=lon_min, xmax=lon_max)
         ax1[site].set_aspect(2.2)
         ax1[site].grid()
         ax1[site].set_title(site)
-    return fig, gs, ax, ax1, axtrans
+    return fig, gs, ax, ax1, axtrans, axtrans1
 
 
 def setup_pretty_axes(imgs, bounds, apex):
@@ -243,30 +244,32 @@ def setup_pretty_axes(imgs, bounds, apex):
     ax.gridlines()
     mcm.maggridlines(ax, apex=apex, apex_height=110.0)
     ax1 = {}
+    axtrans1 = {}
     for i, site in enumerate(imgs.keys()):
         ax1[site] = fig.add_subplot(gs[i, -1], projection=proj)
+        axtrans1[site] = ccrs.PlateCarree()
         ax1[site].coastlines()
         ax1[site].gridlines()
         mcm.maggridlines(ax1[site], apex=apex, apex_height=110.0)
         ax1[site].set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
         ax1[site].set_title(site)
-    return fig, gs, ax, ax1, axtrans
+    return fig, gs, ax, ax1, axtrans, axtrans1
 
 
-def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vmin, vmax, image_norm, axtrans):
+def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vmin, vmax, image_norm, axtrans, axtrans1):
     im_handle = None
     for site in imgs.keys():
         main_img = main_images[site]
         side_img = side_images[site]
         if image_norm is None and vmin is None:
             im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, transform=axtrans)
-            ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, transform=axtrans)
+            ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, transform=axtrans1[site])
         elif image_norm is None:
             im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, vmin=vmin, vmax=vmax, transform=axtrans)
-            ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, vmin=vmin, vmax=vmax, transform=axtrans)
+            ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, vmin=vmin, vmax=vmax, transform=axtrans1[site])
         else:
             im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, norm=image_norm, transform=axtrans)
-            ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, norm=image_norm, transform=axtrans)
+            ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, norm=image_norm, transform=axtrans1[site])
     return im_handle
 
 
@@ -370,14 +373,14 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
 
 def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False):
     if pretty:
-        fig, gs, ax, ax1, axt = setup_pretty_axes(imgs, bounds, apex)
+        fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex)
     else:
-        fig, gs, ax, ax1, axt = setup_fast_axes(imgs, bounds)
+        fig, gs, ax, ax1, axt, axt1 = setup_fast_axes(imgs, bounds)
     side_images, main_images, vmin, vmax, image_norm = prepare_image_layers(skymaps, imgs, colorbar_scale, norm_limits=norm_limits)
     image_cmap = choose_image_cmap(colorbar_color, color)
-    im_handle = draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vmin, vmax, image_norm, axt)
+    im_handle = draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vmin, vmax, image_norm, axt, axt1)
     #traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps)
-    #draw_trajectory_and_ipps(ax, traj_ctx, axt)
+    #draw_trajectory_and_ipps(ax, traj_ctx, axt, axt1)
     if plot_receivers:
         receivers = load_receivers()
         plot_receivers(ax, receivers)
