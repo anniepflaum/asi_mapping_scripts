@@ -64,16 +64,6 @@ def plot_receivers(ax, receivers, axtrans):
         ax.text(receiver["lon"] + 0.12, receiver["lat"] + 0.05, receiver["acronym"], fontsize=8, color="black", zorder=10, bbox=dict(facecolor="white", alpha=0.7, edgecolor="none", pad=0.15), transform=axtrans)
 
 
-#def plot_receivers_pretty(ax, receivers):
-#    if not receivers:
-#        return
-#    lons = [receiver["lon"] for receiver in receivers]
-#    lats = [receiver["lat"] for receiver in receivers]
-#    ax.scatter(lons, lats, marker="^", s=45, color="white", edgecolors="black", linewidths=0.8, zorder=9, label="Receivers", transform=ccrs.PlateCarree())
-#    for receiver in receivers:
-#        ax.text(receiver["lon"] + 0.12, receiver["lat"] + 0.05, receiver["acronym"], fontsize=8, color="black", zorder=10, transform=ccrs.PlateCarree(), bbox=dict(facecolor="white", alpha=0.7, edgecolor="none", pad=0.15))
-
-
 def compute_receiver_ipps(receivers, rocket_geo, ipp_height_km):
     if (
         not receivers
@@ -168,39 +158,6 @@ def prepare_image_layers(skymaps, imgs, colorbar_scale, norm_limits=None):
     return side_images, main_images, vmin, vmax, image_norm
 
 
-#def prepare_pretty_image_layers(skymaps, imgs, colorbar_scale):
-#    render_data = {}
-#    norm_pool = []
-#    for site, img in imgs.items():
-#        img_plot = img.copy()
-#        img_plot[skymaps[site]["mask"]] = np.nan
-#        if colorbar_scale == "log":
-#            img_plot[img_plot <= 0] = np.nan
-#        mapped = img_plot.copy()
-#        lat = skymaps[site]["lat"].copy()
-#        lon = skymaps[site]["lon"].copy()
-#        for mask in skymaps[site]["extra_masks"].values():
-#            mapped[mask] = np.nan
-#        vals = mapped[np.isfinite(mapped)]
-#        if vals.size > 0:
-#            norm_pool.append(vals)
-#        render_data[site] = {
-#            "img_flat": img_plot[~skymaps[site]["mask"]].flatten(),
-#            "lon_flat": skymaps[site]["lon"][~skymaps[site]["mask"]].flatten(),
-#            "lat_flat": skymaps[site]["lat"][~skymaps[site]["mask"]].flatten(),
-#            "imf": mapped[np.isfinite(mapped)].flatten(),
-#            "latf": lat[np.isfinite(mapped)].flatten(),
-#            "lonf": lon[np.isfinite(mapped)].flatten(),
-#        }
-#
-#    if colorbar_scale == "log":
-#        vmin, vmax = compute_log_image_limits(norm_pool)
-#        image_norm = mpl.colors.LogNorm(vmin=vmin, vmax=vmax) if vmin is not None and vmax is not None else None
-#    else:
-#        vmin, vmax = compute_linear_image_limits(norm_pool)
-#        image_norm = None
-#    return render_data, vmin, vmax, image_norm
-
 
 def setup_fast_axes(imgs, bounds):
     coastlons = np.loadtxt(COAST_LON_PATH)
@@ -273,19 +230,6 @@ def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vm
     return im_handle
 
 
-#def draw_pretty_images(ax, ax1, imgs, render_data, image_cmap, vmin, vmax, image_norm):
-#    im_handle = None
-#    for site in imgs.keys():
-#        render = render_data[site]
-#        if image_norm is None and vmin is not None and vmax is not None:
-#            im_handle = ax1[site].tripcolor(render["lon_flat"], render["lat_flat"], render["img_flat"], zorder=3, transform=ccrs.PlateCarree(), cmap=image_cmap, vmin=vmin, vmax=vmax)
-#            ax.tripcolor(render["lonf"], render["latf"], render["imf"], transform=ccrs.PlateCarree(), cmap=image_cmap, vmin=vmin, vmax=vmax)
-#        else:
-#            im_handle = ax1[site].tripcolor(render["lon_flat"], render["lat_flat"], render["img_flat"], zorder=3, transform=ccrs.PlateCarree(), cmap=image_cmap, norm=image_norm)
-#            ax.tripcolor(render["lonf"], render["latf"], render["imf"], transform=ccrs.PlateCarree(), cmap=image_cmap, norm=image_norm)
-#    return im_handle
-
-
 def draw_trajectory_and_ipps(ax, traj_ctx, axtrans):
     left = traj_ctx["left"]
     right = traj_ctx["right"]
@@ -306,28 +250,6 @@ def draw_trajectory_and_ipps(ax, traj_ctx, axtrans):
         ax.scatter([ipp["lon"] for ipp in ipps], [ipp["lat"] for ipp in ipps], marker="x", s=45, color=ipp_color, linewidths=1.4, zorder=11, label=label, transform=axtrans)
         for ipp in ipps:
             ax.text(ipp["lon"] + 0.1, ipp["lat"] + text_dy, ipp["acronym"], fontsize=7, color=ipp_color, zorder=12, bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=0.12), transform=axtrans)
-
-
-#def draw_pretty_trajectory_and_ipps(ax, traj_ctx):
-#    left = traj_ctx["left"]
-#    right = traj_ctx["right"]
-#    ax.plot(left["lon"], left["lat"], color="red", label="GNEISS trajectory", transform=ccrs.PlateCarree(), zorder=7)
-#    ax.scatter(left["lon_minute"], left["lat_minute"], color="red", s=15, transform=ccrs.PlateCarree(), zorder=7)
-#    ax.plot(right["lon"], right["lat"], color="red", transform=ccrs.PlateCarree(), zorder=7)
-#    ax.scatter(right["lon_minute"], right["lat_minute"], color="red", s=15, transform=ccrs.PlateCarree(), zorder=7)
-#    if left["lat_map"] is not None and left["lon_map"] is not None:
-#        ax.scatter(left["lon_map"], left["lat_map"], color="orange", s=50, marker="o", zorder=8, label="Position at map time")
-#    if right["lat_map"] is not None and right["lon_map"] is not None:
-#        ax.scatter(right["lon_map"], right["lat_map"], color="orange", s=50, marker="o", zorder=8)
-#    for ipps, ipp_color, text_dy, label in (
-#        (left["ipps"], "deepskyblue", 0.03, "397 IPP"),
-#        (right["ipps"], "magenta", -0.08, "398 IPP"),
-#    ):
-#        if not ipps:
-#            continue
-#        ax.scatter([ipp["lon"] for ipp in ipps], [ipp["lat"] for ipp in ipps], marker="x", s=45, color=ipp_color, linewidths=1.4, zorder=11, label=label, transform=ccrs.PlateCarree())
-#        for ipp in ipps:
-#            ax.text(ipp["lon"] + 0.1, ipp["lat"] + text_dy, ipp["acronym"], fontsize=7, color=ipp_color, zorder=12, transform=ccrs.PlateCarree(), bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=0.12))
 
 
 def sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw):
@@ -404,24 +326,4 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None,
     )
 
 
-#def plot_pretty(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False):
-#    receivers = load_receivers()
-#    fig, gs, ax, ax1 = setup_pretty_axes(imgs, bounds, apex)
-#    render_data, vmin, vmax, image_norm = prepare_pretty_image_layers(skymaps, imgs, colorbar_scale)
-#    image_cmap = choose_image_cmap(colorbar_color, color)
-#    im_handle = draw_pretty_images(ax, ax1, imgs, render_data, image_cmap, vmin, vmax, image_norm)
-#    traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps)
-#    draw_pretty_trajectory_and_ipps(ax, traj_ctx)
-#    if plot_receivers:
-#        plot_receivers_pretty(ax, receivers)
-#    finalize_plot(
-#        ax,
-#        fig,
-#        gs,
-#        im_handle,
-#        color,
-#        build_time_label(get_plot_call_args()),
-#        output_path,
-#        lambda args: f"../launch_science_pretty/GNEISS_launch_science_pretty_{args.date}_{sanitize_time_for_filename(args.time)}.png",
-#        "../launch_science_pretty/GNEISS_launch_science_pretty.png",
-#    )
+
