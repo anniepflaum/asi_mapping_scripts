@@ -13,7 +13,7 @@ This repository may be used for:
 ```text
 asi_mapping_scripts/
   map_asi_archive.py
-  brightness_vs_time.py
+  traj_brightness_series.py
   trajectory_keogram.py
   coast/
     coastlat.txt
@@ -36,7 +36,7 @@ asi_mapping_scripts/
 - Loads ASI images, maps them geographically, applies overlap masks, overlays the rocket trajectories, and writes a map image.
 - Supports fast and Cartopy-based plotting.
 
-`brightness_vs_time.py`
+`traj_brightness_series.py`
 - Steps through a time range and samples left/right rocket brightness from the selected sites.
 - Writes a CSV dataset with brightness and percentile metadata.
 - Also writes a scatter plot PNG of left/right brightness versus time unless `--no-plot` is used.
@@ -93,7 +93,7 @@ python3 map_asi_archive.py --time 102400 --sites ARV BVR VEE --color red
 Build a brightness-vs-time CSV and PNG plot:
 
 ```bash
-python3 brightness_vs_time.py \
+python3 traj_brightness_series.py \
   --start 101830 \
   --end 102900 \
   --sites ARV BVR VEE
@@ -113,5 +113,5 @@ python3 trajectory_keogram.py \
 Outputs are typically written under `../mapped/<color>/`, for example:
 
 - mapped PNGs from `map_asi_archive.py`
-- brightness-vs-time CSVs and PNG plots from `brightness_vs_time.py`
+- brightness-vs-time CSVs and PNG plots from `traj_brightness_series.py`
 - keogram PNGs from `trajectory_keogram.py`

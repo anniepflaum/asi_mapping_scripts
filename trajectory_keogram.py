@@ -17,7 +17,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from core.time_utils import format_time_label, parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
-from brightness_vs_time import format_time_arg
+from traj_brightness_series import format_time_arg
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates, load_best_frame_from_cached_tiffs
 from core.traj_utils import build_traj_lookup, get_launch_start_from_traj_csv, resample_traj_by_time
 
