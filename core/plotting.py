@@ -13,12 +13,13 @@ from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
 from core.paths import COAST_LAT_PATH, COAST_LON_PATH, LEFT_TRAJECTORY_PATH, RECEIVERS_PATH, RIGHT_TRAJECTORY_PATH
 from core.plot_norm import choose_image_cmap, compute_linear_image_limits, compute_log_image_limits
-from core.time_utils import format_time_label, sanitize_time_for_filename
+from core.time_utils import format_time_label, hhmmss_fractional_to_seconds, sanitize_time_for_filename
 from core.traj_utils import (
     build_traj_lookup,
     format_time_since_launch,
     get_launch_start_from_traj_csv,
     load_traj,
+    load_traj_records,
     lookup_traj_geodetic_position,
     mapped_apex_height,
 )
@@ -137,6 +138,48 @@ def load_trajectory_context(map_time, color, receivers, plot_ipps):
     return {
         "left": {"lat": lat1, "lon": lon1, "lat_minute": latm1, "lon_minute": lonm1, "lat_map": lat_map1, "lon_map": lon_map1, "ipps": left_ipps},
         "right": {"lat": lat2, "lon": lon2, "lat_minute": latm2, "lon_minute": lonm2, "lat_map": lat_map2, "lon_map": lon_map2, "ipps": right_ipps},
+    }
+
+
+def load_geodetic_trajectory_context(map_time):
+    left_utc_times, left_flight_times, left_lats, left_lons, _left_alts = load_traj_records(str(LEFT_TRAJECTORY_PATH))
+    right_utc_times, right_flight_times, right_lats, right_lons, _right_alts = load_traj_records(str(RIGHT_TRAJECTORY_PATH))
+
+    left_idx = np.argwhere(np.isclose(left_flight_times % 60, 0.0, atol=0.05))
+    right_idx = np.argwhere(np.isclose(right_flight_times % 60, 0.0, atol=0.05))
+
+    left_lat_map = None
+    left_lon_map = None
+    right_lat_map = None
+    right_lon_map = None
+    if map_time is not None:
+        map_sec = hhmmss_fractional_to_seconds(map_time)
+        if left_utc_times[0] <= map_sec <= left_utc_times[-1]:
+            idx = int(np.argmin(np.abs(left_utc_times - map_sec)))
+            left_lat_map = float(left_lats[idx])
+            left_lon_map = float(left_lons[idx])
+        if right_utc_times[0] <= map_sec <= right_utc_times[-1]:
+            idx = int(np.argmin(np.abs(right_utc_times - map_sec)))
+            right_lat_map = float(right_lats[idx])
+            right_lon_map = float(right_lons[idx])
+
+    return {
+        "left": {
+            "lat": left_lats,
+            "lon": left_lons,
+            "lat_minute": left_lats[left_idx].squeeze(),
+            "lon_minute": left_lons[left_idx].squeeze(),
+            "lat_map": left_lat_map,
+            "lon_map": left_lon_map,
+        },
+        "right": {
+            "lat": right_lats,
+            "lon": right_lons,
+            "lat_minute": right_lats[right_idx].squeeze(),
+            "lon_minute": right_lons[right_idx].squeeze(),
+            "lat_map": right_lat_map,
+            "lon_map": right_lon_map,
+        },
     }
 
 
@@ -302,6 +345,19 @@ def draw_fast_trajectory_and_ipps(ax, traj_ctx):
             ax.text(ipp["lon"] + 0.1, ipp["lat"] + text_dy, ipp["acronym"], fontsize=7, color=ipp_color, zorder=12, bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=0.12))
 
 
+def draw_fast_geodetic_trajectory(ax, geodetic_traj_ctx):
+    left = geodetic_traj_ctx["left"]
+    right = geodetic_traj_ctx["right"]
+    ax.plot(left["lon"], left["lat"], color="blue", label="GNEISS geodetic trajectory", zorder=6)
+    ax.scatter(left["lon_minute"], left["lat_minute"], color="blue", s=15, zorder=6)
+    ax.plot(right["lon"], right["lat"], color="blue", zorder=6)
+    ax.scatter(right["lon_minute"], right["lat_minute"], color="blue", s=15, zorder=6)
+    if left["lat_map"] is not None and left["lon_map"] is not None:
+        ax.scatter(left["lon_map"], left["lat_map"], color="blue", s=40, marker="o", zorder=7)
+    if right["lat_map"] is not None and right["lon_map"] is not None:
+        ax.scatter(right["lon_map"], right["lat_map"], color="blue", s=40, marker="o", zorder=7)
+
+
 def draw_pretty_trajectory_and_ipps(ax, traj_ctx):
     left = traj_ctx["left"]
     right = traj_ctx["right"]
@@ -322,6 +378,19 @@ def draw_pretty_trajectory_and_ipps(ax, traj_ctx):
         ax.scatter([ipp["lon"] for ipp in ipps], [ipp["lat"] for ipp in ipps], marker="x", s=45, color=ipp_color, linewidths=1.4, zorder=11, label=label, transform=ccrs.PlateCarree())
         for ipp in ipps:
             ax.text(ipp["lon"] + 0.1, ipp["lat"] + text_dy, ipp["acronym"], fontsize=7, color=ipp_color, zorder=12, transform=ccrs.PlateCarree(), bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=0.12))
+
+
+def draw_pretty_geodetic_trajectory(ax, geodetic_traj_ctx):
+    left = geodetic_traj_ctx["left"]
+    right = geodetic_traj_ctx["right"]
+    ax.plot(left["lon"], left["lat"], color="blue", label="GNEISS geodetic trajectory", transform=ccrs.PlateCarree(), zorder=6)
+    ax.scatter(left["lon_minute"], left["lat_minute"], color="blue", s=15, transform=ccrs.PlateCarree(), zorder=6)
+    ax.plot(right["lon"], right["lat"], color="blue", transform=ccrs.PlateCarree(), zorder=6)
+    ax.scatter(right["lon_minute"], right["lat_minute"], color="blue", s=15, transform=ccrs.PlateCarree(), zorder=6)
+    if left["lat_map"] is not None and left["lon_map"] is not None:
+        ax.scatter(left["lon_map"], left["lat_map"], color="blue", s=40, marker="o", transform=ccrs.PlateCarree(), zorder=7)
+    if right["lat_map"] is not None and right["lon_map"] is not None:
+        ax.scatter(right["lon_map"], right["lat_map"], color="blue", s=40, marker="o", transform=ccrs.PlateCarree(), zorder=7)
 
 
 def sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw):
@@ -365,7 +434,7 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", plot_receivers=False, plot_ipps=False):
+def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", plot_receivers=False, plot_ipps=False, plot_geodetic_traj=False):
     receivers = load_receivers()
     fig, gs, ax, ax1 = setup_fast_axes(imgs, bounds)
     side_images, main_images, vmin, vmax, image_norm = prepare_fast_image_layers(skymaps, imgs, colorbar_scale, norm_limits=norm_limits)
@@ -373,6 +442,8 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     im_handle = draw_fast_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vmin, vmax, image_norm)
     traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps)
     draw_fast_trajectory_and_ipps(ax, traj_ctx)
+    if plot_geodetic_traj:
+        draw_fast_geodetic_trajectory(ax, load_geodetic_trajectory_context(map_time))
     if plot_receivers:
         plot_receivers_fast(ax, receivers)
     bright1, bright2 = sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw)
@@ -395,7 +466,7 @@ def plot_fast(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None
     )
 
 
-def plot_pretty(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False):
+def plot_pretty(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, plot_geodetic_traj=False):
     receivers = load_receivers()
     fig, gs, ax, ax1 = setup_pretty_axes(imgs, bounds, apex)
     render_data, vmin, vmax, image_norm = prepare_pretty_image_layers(skymaps, imgs, colorbar_scale)
@@ -403,6 +474,8 @@ def plot_pretty(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=No
     im_handle = draw_pretty_images(ax, ax1, imgs, render_data, image_cmap, vmin, vmax, image_norm)
     traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps)
     draw_pretty_trajectory_and_ipps(ax, traj_ctx)
+    if plot_geodetic_traj:
+        draw_pretty_geodetic_trajectory(ax, load_geodetic_trajectory_context(map_time))
     if plot_receivers:
         plot_receivers_pretty(ax, receivers)
     finalize_plot(
