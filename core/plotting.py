@@ -54,7 +54,7 @@ def load_receivers(path=RECEIVERS_PATH):
         ]
 
 
-def plot_receivers(ax, receivers, axtrans):
+def draw_receivers(ax, receivers, axtrans):
     if not receivers:
         return
     lons = [receiver["lon"] for receiver in receivers]
@@ -219,13 +219,13 @@ def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vm
         main_img = main_images[site]
         side_img = side_images[site]
         if image_norm is None and vmin is None:
-            im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, transform=axtrans)
+            im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, zorder=3, transform=axtrans)
             ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, transform=axtrans1[site])
         elif image_norm is None:
-            im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, vmin=vmin, vmax=vmax, transform=axtrans)
+            im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, vmin=vmin, vmax=vmax, zorder=3, transform=axtrans)
             ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, vmin=vmin, vmax=vmax, transform=axtrans1[site])
         else:
-            im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, norm=image_norm, transform=axtrans)
+            im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, norm=image_norm, zorder=3, transform=axtrans)
             ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, norm=image_norm, transform=axtrans1[site])
     return im_handle
 
@@ -294,6 +294,7 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
 
 
 def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False):
+    receivers = load_receivers()
     if pretty:
         fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex)
     else:
@@ -301,17 +302,16 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None,
     side_images, main_images, vmin, vmax, image_norm = prepare_image_layers(skymaps, imgs, colorbar_scale, norm_limits=norm_limits)
     image_cmap = choose_image_cmap(colorbar_color, color)
     im_handle = draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vmin, vmax, image_norm, axt, axt1)
-    #traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps)
-    #draw_trajectory_and_ipps(ax, traj_ctx, axt, axt1)
+    traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps)
+    draw_trajectory_and_ipps(ax, traj_ctx, axt)
     if plot_receivers:
-        receivers = load_receivers()
-        plot_receivers(ax, receivers)
-    #bright1, bright2 = sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw)
-    #brightness_markers = []
-    #if bright1 is not None:
-    #    brightness_markers.append(("397", bright1))
-    #if bright2 is not None:
-    #    brightness_markers.append(("398", bright2))
+        draw_receivers(ax, receivers, axt)
+    bright1, bright2 = sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw)
+    brightness_markers = []
+    if bright1 is not None:
+        brightness_markers.append(("397", bright1))
+    if bright2 is not None:
+        brightness_markers.append(("398", bright2))
     finalize_plot(
         ax,
         fig,
@@ -322,7 +322,7 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None,
         output_path,
         lambda args: f"../mapped/GNEISS_launch_science_fast_{args.date}_{sanitize_time_for_filename(args.time)}.png",
         "../mapped/GNEISS_launch_science_fast.png",
-        #brightness_markers=brightness_markers,
+        brightness_markers=brightness_markers,
     )
 
 
