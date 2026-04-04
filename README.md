@@ -41,6 +41,10 @@ asi_mapping_scripts/
 - Writes a CSV dataset with brightness and percentile metadata.
 - Also writes a scatter plot PNG of left/right brightness versus time unless `--no-plot` is used.
 
+`map_asi_archive_series.py`
+- Repeats `map_asi_archive.py` over a requested time range.
+- Useful for batch-producing mapped PNGs without re-pasting an inline Python loop.
+
 `trajectory_keogram.py`
 - Builds a keogram along each rocket trajectory.
 - X-axis is UTC time and y-axis is flight time since launch.
@@ -88,6 +92,20 @@ Red-channel map:
 
 ```bash
 python3 map_asi_archive.py --time 102400 --sites ARV BVR VEE --color red
+```
+
+Batch map a time range:
+
+```bash
+python3 map_asi_archive_series.py \
+  --date 20260210 \
+  --start 101900.0 \
+  --end 102900.0 \
+  --step 10 \
+  --sites ARV BVR VEE \
+  --bounds -150 -142 65 69 \
+  --colorbar-color monochromatic \
+  --plot-ipps
 ```
 
 Build a brightness-vs-time CSV and PNG plot:

@@ -14,6 +14,7 @@ For each time step in a requested range, this script:
 import argparse
 import csv
 import datetime as dt
+import re
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -30,7 +31,7 @@ from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, saniti
 from core.paths import LEFT_TRAJECTORY_PATH, RIGHT_TRAJECTORY_PATH
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, mapped_apex_height
-from traj_brightness_series import format_time_arg, load_receivers, load_tiff_frame_with_metadata
+from traj_brightness_series import count_steps, format_time_arg, load_receivers, load_tiff_frame_with_metadata, print_progress
 
 
 def make_output_path(out_arg, start, end, step):
@@ -48,6 +49,83 @@ def make_plot_output_path(csv_path, output_arg):
     return Path(csv_path).with_suffix(".png")
 
 
+def parse_series_filename(csv_path, prefix):
+    pattern = rf"^{re.escape(prefix)}_(\d{{6}}(?:p\d+)?)_(\d{{6}}(?:p\d+)?)_step(\d+(?:p\d+)?)\.csv$"
+    match = re.match(pattern, csv_path.name)
+    if not match:
+        return None
+    start_tok, end_tok, step_tok = match.groups()
+    return {
+        "start_tok": start_tok,
+        "end_tok": end_tok,
+        "start_time": start_tok.replace("p", "."),
+        "end_time": end_tok.replace("p", "."),
+        "step": float(step_tok.replace("p", ".")),
+    }
+
+
+def build_requested_iso_times(date, start, end, step):
+    start_dt = parse_date_and_time(date, start)
+    end_dt = parse_date_and_time(date, end)
+    step_td = dt.timedelta(seconds=step)
+    requested = []
+    t = start_dt
+    while t <= end_dt:
+        requested.append(t.isoformat())
+        t += step_td
+    return requested
+
+
+def csv_contains_requested_times(csv_path, requested_times):
+    try:
+        with csv_path.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            available = {row["time"] for row in reader if row.get("time")}
+    except Exception:
+        return False
+    return all(time_value in available for time_value in requested_times)
+
+
+def find_reusable_csv(preferred_path, prefix, date, start, end, step):
+    requested_times = build_requested_iso_times(date, start, end, step)
+    if preferred_path.exists() and csv_contains_requested_times(preferred_path, requested_times):
+        return preferred_path
+
+    request_start_dt = parse_date_and_time(date, start)
+    request_end_dt = parse_date_and_time(date, end)
+    candidates = []
+    for candidate in preferred_path.parent.glob(f"{prefix}_*_step*.csv"):
+        parsed = parse_series_filename(candidate, prefix)
+        if parsed is None:
+            continue
+        try:
+            candidate_start_dt = parse_date_and_time(date, parsed["start_time"])
+            candidate_end_dt = parse_date_and_time(date, parsed["end_time"])
+        except ValueError:
+            continue
+        if candidate_start_dt > request_start_dt or candidate_end_dt < request_end_dt:
+            continue
+        if csv_contains_requested_times(candidate, requested_times):
+            span_seconds = (candidate_end_dt - candidate_start_dt).total_seconds()
+            candidates.append((span_seconds, parsed["step"], candidate))
+    if not candidates:
+        return preferred_path
+    candidates.sort(key=lambda item: (item[0], item[1], item[2].name))
+    return candidates[0][2]
+
+
+def load_rows_from_csv(csv_path, required_fields):
+    if not csv_path.exists():
+        raise FileNotFoundError(f"CSV file not found: {csv_path}")
+    with csv_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+        missing = [field for field in required_fields if field not in fieldnames]
+        if missing:
+            raise ValueError(f"CSV file {csv_path} is missing required columns: {', '.join(missing)}")
+        return list(reader)
+
+
 def compute_receiver_ipp_samples(receivers, rocket_geo, skymaps, imgs_raw, ipp_height_km):
     samples = []
     if (
@@ -55,7 +133,7 @@ def compute_receiver_ipp_samples(receivers, rocket_geo, skymaps, imgs_raw, ipp_h
         or rocket_geo[0] is None
         or rocket_geo[1] is None
         or rocket_geo[2] is None
-        or rocket_geo[2] < ipp_height_km
+        or rocket_geo[2] <= ipp_height_km
     ):
         for receiver in receivers:
             samples.append(
@@ -113,7 +191,7 @@ def plot_ipps_timeseries(times, rows, receivers, output_path, title):
     if not times:
         raise ValueError("No rows with iso_time were collected")
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    fig, axes = plt.subplots(2, 1, figsize=(12, 16), sharex=True)
     rocket_configs = [("397", axes[0]), ("398", axes[1])]
     cmap = plt.get_cmap("tab10")
 
@@ -125,12 +203,13 @@ def plot_ipps_timeseries(times, rows, receivers, output_path, title):
             for row in rows:
                 value = row[f"{rocket_label}_{acronym}_ipp_brightness"]
                 brightnesses.append(float(value) if value else None)
-            ax.plot(times, brightnesses, marker="o", markersize=2.5, linewidth=1.0, color=color, label=acronym)
+            ax.plot(times, brightnesses, linewidth=1.0, color=color, label=acronym)
+            ax.set_yscale("log")
             ax.set_ylabel(f"{rocket_label} brightness")
             ax.grid(True, alpha=0.3)
 
     handles, labels = axes[0].get_legend_handles_labels()
-    axes[0].legend(handles, labels, ncols=min(4, len(receivers)), fontsize=8, loc="upper right")
+    axes[0].legend(handles, labels, ncols=min(4, len(receivers)), fontsize=8, loc="upper left")
     axes[0].set_title(title)
     axes[1].set_xlabel("Time")
     axes[1].xaxis.set_major_locator(mdates.MinuteLocator(interval=1))
@@ -155,6 +234,7 @@ def main():
     ap.add_argument("--plot-output", default=None, help="Optional output PNG path for the brightness plot")
     ap.add_argument("--plot-title", default=None, help="Optional plot title")
     ap.add_argument("--no-plot", action="store_true", help="Write the CSV only and skip the PNG plot")
+    ap.add_argument("--no-csv", action="store_true", help="Skip CSV generation and plot from an existing CSV instead")
     args = ap.parse_args()
 
     try:
@@ -194,13 +274,35 @@ def main():
     if not out_path.is_absolute():
         out_path = Path("..") / "mapped" / args.color / out_path
 
+    if args.no_csv:
+        if args.no_plot:
+            ap.error("--no-csv cannot be combined with --no-plot")
+        csv_path = find_reusable_csv(out_path, "ipps_brightness_series", args.date, args.start, args.end, args.step)
+        fieldnames = build_fieldnames(receivers)
+        rows = load_rows_from_csv(csv_path, ["time", *fieldnames[1:]])
+        requested_times = set(build_requested_iso_times(args.date, args.start, args.end, args.step))
+        rows = [row for row in rows if row.get("time") in requested_times]
+        plot_times = [dt.datetime.fromisoformat(row["time"]) for row in rows if row.get("time")]
+        plot_output = make_plot_output_path(out_path, args.plot_output)
+        plot_title = args.plot_title or f"IPP Brightness vs Time ({args.color})"
+        plot_ipps_timeseries(plot_times, rows, receivers, plot_output, plot_title)
+        print(f"Plotted from existing CSV {csv_path}")
+        return
+
     fieldnames = build_fieldnames(receivers)
     rows = []
     plot_times = []
     step_td = dt.timedelta(seconds=args.step)
+    total_steps = count_steps(start_dt, end_dt, args.step)
+    step_idx = 0
     t = start_dt
     while t <= end_dt:
+        step_idx += 1
         time_arg = format_time_arg(t)
+        print_progress(step_idx, total_steps, time_arg)
+        left_geo = lookup_traj_geodetic_position(left_traj, time_arg)
+        right_geo = lookup_traj_geodetic_position(right_traj, time_arg)
+
         imgs_raw = {}
 
         for site in ["ARV", "VEE", "BVR"]:
@@ -225,8 +327,6 @@ def main():
             except Exception as exc:
                 print(f"{time_arg} PKR: frame load failed: {exc}")
 
-        left_geo = lookup_traj_geodetic_position(left_traj, time_arg)
-        right_geo = lookup_traj_geodetic_position(right_traj, time_arg)
         left_samples = compute_receiver_ipp_samples(receivers, left_geo, skymaps, imgs_raw, ipp_height_km)
         right_samples = compute_receiver_ipp_samples(receivers, right_geo, skymaps, imgs_raw, ipp_height_km)
 
