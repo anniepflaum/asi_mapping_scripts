@@ -16,12 +16,14 @@ from core.plot_norm import choose_image_cmap, compute_linear_image_limits, compu
 from core.time_utils import format_time_label, hhmmss_fractional_to_seconds, sanitize_time_for_filename
 from core.traj_utils import (
     build_traj_lookup,
+    fixed_utc_minute_marker_indices,
     format_time_since_launch,
     get_launch_start_from_traj_csv,
     load_traj,
     load_traj_records,
     lookup_traj_geodetic_position,
     mapped_apex_height,
+    trajectory_marker_second,
 )
 
 
@@ -145,8 +147,8 @@ def load_geodetic_trajectory_context(map_time):
     left_utc_times, left_flight_times, left_lats, left_lons, _left_alts = load_traj_records(str(LEFT_TRAJECTORY_PATH))
     right_utc_times, right_flight_times, right_lats, right_lons, _right_alts = load_traj_records(str(RIGHT_TRAJECTORY_PATH))
 
-    left_idx = np.argwhere(np.isclose(left_flight_times % 60, 0.0, atol=0.05))
-    right_idx = np.argwhere(np.isclose(right_flight_times % 60, 0.0, atol=0.05))
+    left_idx = fixed_utc_minute_marker_indices(left_utc_times, second_of_minute=trajectory_marker_second(str(LEFT_TRAJECTORY_PATH)))
+    right_idx = fixed_utc_minute_marker_indices(right_utc_times, second_of_minute=trajectory_marker_second(str(RIGHT_TRAJECTORY_PATH)))
 
     left_lat_map = None
     left_lon_map = None
