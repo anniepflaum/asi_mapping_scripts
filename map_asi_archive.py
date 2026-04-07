@@ -28,7 +28,7 @@ from core.masks import build_overlap_masks
 from core.fetch_url import closest_amisr_png_url
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED, REFERENCE_NORMALIZATION_TIME
 from core.plot_norm import compute_reference_norm_limits
-from core.plotting import plot_fast, plot_pretty
+from core.plotting import plot_map
 from core.remote_data import retrieve_image, retrieve_pfisr
 from core.skymaps import load_skymaps
 from core.time_utils import (
@@ -152,42 +152,26 @@ def main():
 
     # --- Run downstream plotting for all processed sites ---
     if imgs:
-        if args.pretty:
-            plot_pretty(
-                skymaps,
-                imgs,
-                pfisr,
-                output_path=output_path,
-                map_time=args.time,
-                bounds=args.bounds,
-                color=args.color,
-                colorbar_scale=args.colorbar_scale,
-                colorbar_color=args.colorbar_color,
-                apex=apex,
-                plot_receivers=args.plot_receivers,
-                plot_ipps=args.plot_ipps,
-                plot_geodetic_traj=args.plot_geodetic_traj,
-            )
-        else:
-            plot_fast(
-                skymaps,
-                imgs,
-                pfisr,
-                output_path=output_path,
-                map_time=args.time,
-                bounds=args.bounds,
-                color=args.color,
-                imgs_raw=imgs_raw,
-                norm_limits=fixed_norm_limits,
-                colorbar_scale=args.colorbar_scale,
-                colorbar_color=args.colorbar_color,
-                plot_receivers=args.plot_receivers,
-                plot_ipps=args.plot_ipps,
-                plot_geodetic_traj=args.plot_geodetic_traj,
-            )
+        plot_map(
+            skymaps,
+            imgs,
+            pfisr,
+            output_path=output_path,
+            map_time=args.time,
+            bounds=args.bounds,
+            color=args.color,
+            colorbar_scale=args.colorbar_scale,
+            colorbar_color=args.colorbar_color,
+            apex=apex,
+            plot_receivers=args.plot_receivers,
+            plot_ipps=args.plot_ipps,
+            pretty=args.pretty,
+            plot_geodetic_traj=args.plot_geodetic_traj,
+        )
 
     tocall = time.time()
     print(f"Total run time: {tocall - ticall:.2f} s")
 
 if __name__ == "__main__":
     main()
+
