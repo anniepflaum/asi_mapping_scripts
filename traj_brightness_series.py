@@ -14,6 +14,7 @@ import argparse
 import csv
 import datetime as dt
 import re
+import sys
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -43,6 +44,22 @@ def format_time_arg(t):
     return f"{hhmmss}.{frac}" if frac else hhmmss
 
 
+def count_steps(start_dt, end_dt, step_seconds):
+    total_seconds = max((end_dt - start_dt).total_seconds(), 0.0)
+    return int(total_seconds / step_seconds) + 1
+
+
+def print_progress(step_idx, total_steps, time_arg):
+    width = 30
+    filled = min(width, int(width * step_idx / max(total_steps, 1)))
+    bar = "#" * filled + "-" * (width - filled)
+    msg = f"\r[{bar}] {step_idx:>5}/{total_steps:<5} {time_arg}"
+    sys.stdout.write(msg)
+    sys.stdout.flush()
+    if step_idx >= total_steps:
+        sys.stdout.write("\n")
+
+
 def make_output_path(out_arg, date, start, end, step):
     if out_arg:
         return Path(out_arg)
@@ -62,12 +79,89 @@ def make_receiver_output_path(csv_path):
     return csv_path.with_name(f"{csv_path.stem}_receiver_ipps.csv")
 
 
+def parse_series_filename(csv_path, prefix):
+    pattern = rf"^{re.escape(prefix)}_(\d{{6}}(?:p\d+)?)_(\d{{6}}(?:p\d+)?)_step(\d+(?:p\d+)?)\.csv$"
+    match = re.match(pattern, csv_path.name)
+    if not match:
+        return None
+    start_tok, end_tok, step_tok = match.groups()
+    return {
+        "start_tok": start_tok,
+        "end_tok": end_tok,
+        "start_time": start_tok.replace("p", "."),
+        "end_time": end_tok.replace("p", "."),
+        "step": float(step_tok.replace("p", ".")),
+    }
+
+
+def build_requested_iso_times(date, start, end, step):
+    start_dt = parse_date_and_time(date, start)
+    end_dt = parse_date_and_time(date, end)
+    step_td = dt.timedelta(seconds=step)
+    requested = []
+    t = start_dt
+    while t <= end_dt:
+        requested.append(t.isoformat())
+        t += step_td
+    return requested
+
+
+def csv_contains_requested_times(csv_path, requested_times):
+    try:
+        with csv_path.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            available = {row["time"] for row in reader if row.get("time")}
+    except Exception:
+        return False
+    return all(time_value in available for time_value in requested_times)
+
+
+def find_reusable_csv(preferred_path, prefix, date, start, end, step):
+    requested_times = build_requested_iso_times(date, start, end, step)
+    if preferred_path.exists() and csv_contains_requested_times(preferred_path, requested_times):
+        return preferred_path
+
+    request_start_dt = parse_date_and_time(date, start)
+    request_end_dt = parse_date_and_time(date, end)
+    candidates = []
+    for candidate in preferred_path.parent.glob(f"{prefix}_*_step*.csv"):
+        parsed = parse_series_filename(candidate, prefix)
+        if parsed is None:
+            continue
+        try:
+            candidate_start_dt = parse_date_and_time(date, parsed["start_time"])
+            candidate_end_dt = parse_date_and_time(date, parsed["end_time"])
+        except ValueError:
+            continue
+        if candidate_start_dt > request_start_dt or candidate_end_dt < request_end_dt:
+            continue
+        if csv_contains_requested_times(candidate, requested_times):
+            span_seconds = (candidate_end_dt - candidate_start_dt).total_seconds()
+            candidates.append((span_seconds, parsed["step"], candidate))
+    if not candidates:
+        return preferred_path
+    candidates.sort(key=lambda item: (item[0], item[1], item[2].name))
+    return candidates[0][2]
+
+
+def load_rows_from_csv(csv_path, required_fields):
+    if not csv_path.exists():
+        raise FileNotFoundError(f"CSV file not found: {csv_path}")
+    with csv_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+        missing = [field for field in required_fields if field not in fieldnames]
+        if missing:
+            raise ValueError(f"CSV file {csv_path} is missing required columns: {', '.join(missing)}")
+        return list(reader)
+
+
 def plot_brightness_timeseries(times, left, right, output_path, title, left_site_changes=None, right_site_changes=None):
     if not times:
         raise ValueError("No rows with iso_time were collected")
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.scatter(times, left, color="tab:red", s=10, label="397 brightness")
-    ax.scatter(times, right, color="tab:blue", s=10, label="398 brightness")
+    ax.plot(times, left, linewidth=1.0, color="tab:red", label="397 brightness")
+    ax.plot(times, right, linewidth=1.0, color="tab:blue", label="398 brightness")
     for idx, change_time in enumerate(left_site_changes or []):
         ax.axvline(
             change_time,
@@ -88,6 +182,7 @@ def plot_brightness_timeseries(times, left, right, output_path, title, left_site
         )
     ax.set_title(title)
     ax.set_xlabel("Time")
+    ax.set_yscale("log")
     ax.set_ylabel("Brightness")
     ax.grid(True, alpha=0.3)
     ax.legend()
@@ -201,6 +296,7 @@ def main():
     ap.add_argument("--plot-output", default=None, help="Optional output PNG path for the brightness plot")
     ap.add_argument("--plot-title", default=None, help="Optional plot title")
     ap.add_argument("--no-plot", action="store_true", help="Write the CSV only and skip the PNG plot")
+    ap.add_argument("--no-csv", action="store_true", help="Skip CSV generation and plot from an existing CSV instead")
     args = ap.parse_args()
 
     try:
@@ -240,6 +336,41 @@ def main():
     if not out_path.is_absolute():
         out_path = Path("..") / "mapped" / args.color / out_path
 
+    if args.no_csv:
+        if args.no_plot:
+            ap.error("--no-csv cannot be combined with --no-plot")
+        csv_path = find_reusable_csv(out_path, "brightness_vs_time", args.date, args.start, args.end, args.step)
+        rows = load_rows_from_csv(
+            csv_path,
+            [
+                "time",
+                "left_frame_site",
+                "left_brightness",
+                "right_frame_site",
+                "right_brightness",
+            ],
+        )
+        requested_times = set(build_requested_iso_times(args.date, args.start, args.end, args.step))
+        rows = [row for row in rows if row.get("time") in requested_times]
+        plot_times = [dt.datetime.fromisoformat(row["time"]) for row in rows if row.get("time")]
+        plot_left = [float(row["left_brightness"]) if row.get("left_brightness") else None for row in rows]
+        plot_right = [float(row["right_brightness"]) if row.get("right_brightness") else None for row in rows]
+        left_site_changes = get_site_change_times(rows, "left_frame_site")
+        right_site_changes = get_site_change_times(rows, "right_frame_site")
+        plot_output = make_plot_output_path(out_path, args.plot_output)
+        plot_title = args.plot_title or f"Brightness vs Time ({args.color})"
+        plot_brightness_timeseries(
+            plot_times,
+            plot_left,
+            plot_right,
+            plot_output,
+            plot_title,
+            left_site_changes=left_site_changes,
+            right_site_changes=right_site_changes,
+        )
+        print(f"Plotted from existing CSV {csv_path}")
+        return
+
     fieldnames = [
         "time",
         "left_frame_site",
@@ -264,9 +395,13 @@ def main():
     plot_left = []
     plot_right = []
     step_td = dt.timedelta(seconds=args.step)
+    total_steps = count_steps(start_dt, end_dt, args.step)
+    step_idx = 0
     t = start_dt
     while t <= end_dt:
+        step_idx += 1
         time_arg = format_time_arg(t)
+        print_progress(step_idx, total_steps, time_arg)
         imgs_raw = {}
         frame_info = {}
 

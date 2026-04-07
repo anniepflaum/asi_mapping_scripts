@@ -13,14 +13,17 @@ from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
 from core.paths import COAST_LAT_PATH, COAST_LON_PATH, LEFT_TRAJECTORY_PATH, RECEIVERS_PATH, RIGHT_TRAJECTORY_PATH
 from core.plot_norm import choose_image_cmap, compute_linear_image_limits, compute_log_image_limits
-from core.time_utils import format_time_label, sanitize_time_for_filename
+from core.time_utils import format_time_label, hhmmss_fractional_to_seconds, sanitize_time_for_filename
 from core.traj_utils import (
     build_traj_lookup,
+    fixed_utc_minute_marker_indices,
     format_time_since_launch,
     get_launch_start_from_traj_csv,
     load_traj,
+    load_traj_records,
     lookup_traj_geodetic_position,
     mapped_apex_height,
+    trajectory_marker_second,
 )
 
 
@@ -127,6 +130,49 @@ def load_trajectory_context(map_time, color, receivers, plot_ipps):
     return {
         "left": {"lat": lat1, "lon": lon1, "lat_minute": latm1, "lon_minute": lonm1, "lat_map": lat_map1, "lon_map": lon_map1, "ipps": left_ipps},
         "right": {"lat": lat2, "lon": lon2, "lat_minute": latm2, "lon_minute": lonm2, "lat_map": lat_map2, "lon_map": lon_map2, "ipps": right_ipps},
+    }
+
+
+
+def load_geodetic_trajectory_context(map_time):
+    left_utc_times, left_flight_times, left_lats, left_lons, _left_alts = load_traj_records(str(LEFT_TRAJECTORY_PATH))
+    right_utc_times, right_flight_times, right_lats, right_lons, _right_alts = load_traj_records(str(RIGHT_TRAJECTORY_PATH))
+
+    left_idx = fixed_utc_minute_marker_indices(left_utc_times, second_of_minute=trajectory_marker_second(str(LEFT_TRAJECTORY_PATH)))
+    right_idx = fixed_utc_minute_marker_indices(right_utc_times, second_of_minute=trajectory_marker_second(str(RIGHT_TRAJECTORY_PATH)))
+
+    left_lat_map = None
+    left_lon_map = None
+    right_lat_map = None
+    right_lon_map = None
+    if map_time is not None:
+        map_sec = hhmmss_fractional_to_seconds(map_time)
+        if left_utc_times[0] <= map_sec <= left_utc_times[-1]:
+            idx = int(np.argmin(np.abs(left_utc_times - map_sec)))
+            left_lat_map = float(left_lats[idx])
+            left_lon_map = float(left_lons[idx])
+        if right_utc_times[0] <= map_sec <= right_utc_times[-1]:
+            idx = int(np.argmin(np.abs(right_utc_times - map_sec)))
+            right_lat_map = float(right_lats[idx])
+            right_lon_map = float(right_lons[idx])
+
+    return {
+        "left": {
+            "lat": left_lats,
+            "lon": left_lons,
+            "lat_minute": left_lats[left_idx].squeeze(),
+            "lon_minute": left_lons[left_idx].squeeze(),
+            "lat_map": left_lat_map,
+            "lon_map": left_lon_map,
+        },
+        "right": {
+            "lat": right_lats,
+            "lon": right_lons,
+            "lat_minute": right_lats[right_idx].squeeze(),
+            "lon_minute": right_lons[right_idx].squeeze(),
+            "lat_map": right_lat_map,
+            "lon_map": right_lon_map,
+        },
     }
 
 
@@ -252,6 +298,19 @@ def draw_trajectory_and_ipps(ax, traj_ctx, axtrans):
             ax.text(ipp["lon"] + 0.1, ipp["lat"] + text_dy, ipp["acronym"], fontsize=7, color=ipp_color, zorder=12, bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=0.12), transform=axtrans)
 
 
+def draw_geodetic_trajectory(ax, geodetic_traj_ctx, axtrans):
+    left = geodetic_traj_ctx["left"]
+    right = geodetic_traj_ctx["right"]
+    ax.plot(left["lon"], left["lat"], color="blue", label="GNEISS geodetic trajectory", transform=axtrans, zorder=6)
+    ax.scatter(left["lon_minute"], left["lat_minute"], color="blue", s=15, transform=axtrans, zorder=6)
+    ax.plot(right["lon"], right["lat"], color="blue", transform=axtrans, zorder=6)
+    ax.scatter(right["lon_minute"], right["lat_minute"], color="blue", s=15, transform=axtrans, zorder=6)
+    if left["lat_map"] is not None and left["lon_map"] is not None:
+        ax.scatter(left["lon_map"], left["lat_map"], color="blue", s=40, marker="o", transform=axtrans, zorder=7)
+    if right["lat_map"] is not None and right["lon_map"] is not None:
+        ax.scatter(right["lon_map"], right["lat_map"], color="blue", s=40, marker="o", transform=axtrans, zorder=7)
+
+
 def sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw):
     bright1 = None
     bright2 = None
@@ -304,6 +363,8 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None,
     im_handle = draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vmin, vmax, image_norm, axt, axt1)
     traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps)
     draw_trajectory_and_ipps(ax, traj_ctx, axt)
+    if plot_geodetic_traj:
+        draw_geodetic_trajectory(ax, load_geodetic_trajectory_context(map_time), axt)
     if plot_receivers:
         draw_receivers(ax, receivers, axt)
     bright1, bright2 = sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw)

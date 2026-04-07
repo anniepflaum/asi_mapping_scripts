@@ -71,6 +71,7 @@ def main():
     ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
     ap.add_argument("--plot-receivers", action="store_true", help="Plot receiver locations from receivers.csv on the map")
     ap.add_argument("--plot-ipps", action="store_true", help="Plot receiver ionospheric pierce points on the map")
+    ap.add_argument("--plot-geodetic-traj", dest="plot_geodetic_traj", action="store_true", help="Overlay the rocket trajectories in geodetic coordinates as blue traces")
     args = ap.parse_args()
     try:
         parse_hhmmss_fractional(args.time)
@@ -165,6 +166,7 @@ def main():
             plot_receivers=args.plot_receivers,
             plot_ipps=args.plot_ipps,
             pretty=args.pretty,
+            plot_geodetic_traj=args.plot_geodetic_traj,
         )
 
     tocall = time.time()
