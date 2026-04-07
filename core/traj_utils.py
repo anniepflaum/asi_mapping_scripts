@@ -2,11 +2,13 @@
 """Shared GPS-export trajectory CSV helpers."""
 
 import csv
+from pathlib import Path
 import re
 
 import numpy as np
 from apexpy import Apex
 
+from core.paths import LEFT_TRAJECTORY_PATH, RIGHT_TRAJECTORY_PATH
 from core.time_utils import hhmmss_fractional_to_seconds
 
 
@@ -83,6 +85,33 @@ def format_time_since_launch(map_time, launch_start):
     return f"T{rel_sec:+.1f} s"
 
 
+def fixed_utc_minute_marker_indices(utc_times, second_of_minute=30.0):
+    """Return nearest-sample indices for fixed UTC minute markers, e.g. HH:MM:30."""
+    utc_times = np.asarray(utc_times, dtype=float)
+    if utc_times.size == 0:
+        return np.array([], dtype=int)
+
+    first_target = np.ceil((utc_times[0] - second_of_minute) / 60.0) * 60.0 + second_of_minute
+    last_target = np.floor((utc_times[-1] - second_of_minute) / 60.0) * 60.0 + second_of_minute
+    if first_target > last_target:
+        return np.array([], dtype=int)
+
+    targets = np.arange(first_target, last_target + 1e-9, 60.0, dtype=float)
+    idx = [int(np.argmin(np.abs(utc_times - target))) for target in targets]
+    return np.asarray(sorted(set(idx)), dtype=int)
+
+
+def trajectory_marker_second(filename):
+    """Return the fixed UTC second-of-minute used for trajectory marker placement."""
+    path_str = str(filename)
+    path_name = Path(path_str).name
+    if path_name == LEFT_TRAJECTORY_PATH.name or "36397" in path_name:
+        return 0.0
+    if path_name == RIGHT_TRAJECTORY_PATH.name or "36398" in path_name:
+        return 30.0
+    return 30.0
+
+
 def load_traj(filename, map_time=None, color="green"):
     """
     Load rocket trajectory from a GPS export CSV.
@@ -93,7 +122,7 @@ def load_traj(filename, map_time=None, color="green"):
     utc_times, flight_times, lats, lons, alts = load_traj_records(filename)
 
     lats, lons, _ = apex.map_to_height(lats, lons, alts, mapped_apex_height(color))
-    idx = np.argwhere(np.isclose(flight_times % 60, 0.0, atol=0.05))
+    idx = fixed_utc_minute_marker_indices(utc_times, second_of_minute=trajectory_marker_second(filename))
     latsm = lats[idx].squeeze()
     lonsm = lons[idx].squeeze()
     aidx = np.argmax(alts)
