@@ -69,6 +69,13 @@ def main():
     )
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling for ASI intensity")
     ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
+    ap.add_argument(
+        "--no-shared-norm",
+        dest="shared_norm",
+        action="store_false",
+        default=True,
+        help="Disable cross-site shared brightness normalization and normalize each output frame independently",
+    )
     ap.add_argument("--plot-receivers", action="store_true", help="Plot receiver locations from receivers.csv on the map")
     ap.add_argument("--plot-ipps", action="store_true", help="Plot receiver ionospheric pierce points on the map")
     ap.add_argument("--plot-geodetic-traj", dest="plot_geodetic_traj", action="store_true", help="Overlay the rocket trajectories in geodetic coordinates as blue traces")
@@ -110,15 +117,17 @@ def main():
     frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
 
     # --- Process TIFF-backed sites: search multiple tiles and select closest frame ---
-    fixed_norm_limits = compute_reference_norm_limits(
-        skymaps,
-        selected_sites,
-        date,
-        REFERENCE_NORMALIZATION_TIME,
-        args.color,
-        frame_interval,
-        colorbar_scale=args.colorbar_scale,
-    )
+    fixed_norm_limits = None
+    if args.shared_norm:
+        fixed_norm_limits = compute_reference_norm_limits(
+            skymaps,
+            selected_sites,
+            date,
+            REFERENCE_NORMALIZATION_TIME,
+            args.color,
+            frame_interval,
+            colorbar_scale=args.colorbar_scale,
+        )
     for site in ['ARV', 'VEE', 'BVR']:
         if site not in selected_sites:
             continue
@@ -161,8 +170,10 @@ def main():
             map_time=args.time,
             bounds=args.bounds,
             color=args.color,
+            norm_limits=fixed_norm_limits,
             colorbar_scale=args.colorbar_scale,
             colorbar_color=args.colorbar_color,
+            shared_norm=args.shared_norm,
             apex=apex,
             plot_receivers=args.plot_receivers,
             plot_ipps=args.plot_ipps,

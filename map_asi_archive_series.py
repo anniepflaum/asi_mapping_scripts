@@ -67,6 +67,8 @@ def build_command(args, time_arg):
         "--colorbar-scale",
         args.colorbar_scale,
     ]
+    if not args.shared_norm:
+        cmd.append("--no-shared-norm")
     if args.bounds is not None:
         cmd.extend(["--bounds", *(str(v) for v in args.bounds)])
     if args.pretty:
@@ -98,6 +100,13 @@ def main():
     )
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling")
     ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
+    ap.add_argument(
+        "--no-shared-norm",
+        dest="shared_norm",
+        action="store_false",
+        default=True,
+        help="Disable cross-site shared brightness normalization in downstream map calls",
+    )
     ap.add_argument("--pretty", action="store_true", help="Use Cartopy plotting")
     ap.add_argument("--plot-receivers", action="store_true", help="Pass --plot-receivers through to map_asi_archive.py")
     ap.add_argument("--plot-ipps", action="store_true", help="Pass --plot-ipps through to map_asi_archive.py")

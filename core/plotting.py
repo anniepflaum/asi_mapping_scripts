@@ -214,10 +214,12 @@ def load_geodetic_trajectory_context(map_time):
     }
 
 
-def prepare_image_layers(skymaps, imgs, colorbar_scale, norm_limits=None):
+def prepare_image_layers(skymaps, imgs, colorbar_scale, norm_limits=None, shared_norm=True):
     side_images = {}
     main_images = {}
     norm_pool = []
+    site_limits = {}
+    site_norms = {}
     for site, img in imgs.items():
         side_img = img.copy()
         side_img[skymaps[site]["mask"]] = np.nan
@@ -231,15 +233,23 @@ def prepare_image_layers(skymaps, imgs, colorbar_scale, norm_limits=None):
         vals = main_img[np.isfinite(main_img)]
         if vals.size > 0:
             norm_pool.append(vals)
+        if colorbar_scale == "log":
+            site_vmin, site_vmax = compute_log_image_limits([vals]) if vals.size > 0 else (None, None)
+        else:
+            site_vmin, site_vmax = compute_linear_image_limits([vals]) if vals.size > 0 else (None, None)
+        site_limits[site] = (site_vmin, site_vmax)
+        site_norms[site] = mpl.colors.LogNorm(vmin=site_vmin, vmax=site_vmax) if colorbar_scale == "log" and site_vmin is not None and site_vmax is not None else None
 
-    if norm_limits is not None and norm_limits[0] is not None and norm_limits[1] is not None:
-        vmin, vmax = norm_limits
-    elif colorbar_scale == "log":
-        vmin, vmax = compute_log_image_limits(norm_pool)
+    if shared_norm and norm_limits is not None and norm_limits[0] is not None and norm_limits[1] is not None:
+        shared_vmin, shared_vmax = norm_limits
+    elif shared_norm and colorbar_scale == "log":
+        shared_vmin, shared_vmax = compute_log_image_limits(norm_pool)
+    elif shared_norm:
+        shared_vmin, shared_vmax = compute_linear_image_limits(norm_pool)
     else:
-        vmin, vmax = compute_linear_image_limits(norm_pool)
-    image_norm = mpl.colors.LogNorm(vmin=vmin, vmax=vmax) if colorbar_scale == "log" and vmin is not None and vmax is not None else None
-    return side_images, main_images, vmin, vmax, image_norm
+        shared_vmin, shared_vmax = None, None
+    shared_image_norm = mpl.colors.LogNorm(vmin=shared_vmin, vmax=shared_vmax) if shared_norm and colorbar_scale == "log" and shared_vmin is not None and shared_vmax is not None else None
+    return side_images, main_images, site_limits, site_norms, shared_vmin, shared_vmax, shared_image_norm
 
 
 
@@ -297,11 +307,13 @@ def setup_pretty_axes(imgs, bounds, apex):
     return fig, gs, ax, ax1, axtrans, axtrans1
 
 
-def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vmin, vmax, image_norm, axtrans, axtrans1):
+def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, shared_vmin, shared_vmax, shared_image_norm, site_limits, site_norms, shared_norm, axtrans, axtrans1):
     im_handle = None
     for site in imgs.keys():
         main_img = main_images[site]
         side_img = side_images[site]
+        vmin, vmax = site_limits[site] if not shared_norm else (shared_vmin, shared_vmax)
+        image_norm = site_norms[site] if not shared_norm else shared_image_norm
         if image_norm is None and vmin is None:
             im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, zorder=3, transform=axtrans)
             ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, transform=axtrans1[site])
@@ -374,18 +386,21 @@ def sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw):
     return bright1, bright2
 
 
-def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default_with_args, default_without_args, brightness_markers=None):
+def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default_with_args, default_without_args, brightness_markers=None, shared_norm=True):
     ax.text(0.99, 0.01, label_str, transform=ax.transAxes, fontsize=12, color="w", ha="right", va="bottom", bbox=dict(facecolor="black", alpha=0.5, boxstyle="round,pad=0.2"))
     ax.set_title(f"Mapped ASIs and GNEISS trajectory ({color} channel)")
     ax.legend(loc="upper right")
-    cax = fig.add_subplot(gs[:, 1])
-    cbar = fig.colorbar(im_handle, cax=cax, orientation="vertical")
-    cbar.set_label(channel_label(color))
-    for tag, bright in brightness_markers or []:
-        y = np.clip(bright["percentile"] / 100.0, 0.0, 1.0)
-        cbar.ax.plot([0.0, 1.0], [y, y], transform=cbar.ax.transAxes, color="black", linewidth=4.0, zorder=1000, solid_capstyle="butt", clip_on=False)
-        cbar.ax.plot([0.0, 1.0], [y, y], transform=cbar.ax.transAxes, color="white", linewidth=2.2, zorder=1001, solid_capstyle="butt", clip_on=False)
-        cbar.ax.text(-0.05, y, f"{tag}: {bright['site']} P{bright['percentile']:.1f}", transform=cbar.ax.transAxes, color="black", fontsize=8, va="center", ha="right", clip_on=False)
+    if shared_norm:
+        cax = fig.add_subplot(gs[:, 1])
+        cbar = fig.colorbar(im_handle, cax=cax, orientation="vertical")
+        cbar.set_label(channel_label(color))
+        for tag, bright in brightness_markers or []:
+            y = np.clip(bright["percentile"] / 100.0, 0.0, 1.0)
+            cbar.ax.plot([0.0, 1.0], [y, y], transform=cbar.ax.transAxes, color="black", linewidth=4.0, zorder=1000, solid_capstyle="butt", clip_on=False)
+            cbar.ax.plot([0.0, 1.0], [y, y], transform=cbar.ax.transAxes, color="white", linewidth=2.2, zorder=1001, solid_capstyle="butt", clip_on=False)
+            cbar.ax.text(-0.05, y, f"{tag}: {bright['site']} P{bright['percentile']:.1f}", transform=cbar.ax.transAxes, color="black", fontsize=8, va="center", ha="right", clip_on=False)
+    else:
+        ax.text(0.01, 0.01, "Per-site normalization", transform=ax.transAxes, fontsize=10, color="w", ha="left", va="bottom", bbox=dict(facecolor="black", alpha=0.5, boxstyle="round,pad=0.2"))
 
     args = get_plot_call_args()
     plt.tight_layout()
@@ -398,15 +413,37 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False):
+def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True):
     receivers = load_receivers() if (plot_receivers or plot_ipps) else []
     if pretty:
         fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex)
     else:
         fig, gs, ax, ax1, axt, axt1 = setup_fast_axes(imgs, bounds)
-    side_images, main_images, vmin, vmax, image_norm = prepare_image_layers(skymaps, imgs, colorbar_scale, norm_limits=norm_limits)
+    side_images, main_images, site_limits, site_norms, shared_vmin, shared_vmax, shared_image_norm = prepare_image_layers(
+        skymaps,
+        imgs,
+        colorbar_scale,
+        norm_limits=norm_limits,
+        shared_norm=shared_norm,
+    )
     image_cmap = choose_image_cmap(colorbar_color, color)
-    im_handle = draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vmin, vmax, image_norm, axt, axt1)
+    im_handle = draw_images(
+        ax,
+        ax1,
+        skymaps,
+        imgs,
+        side_images,
+        main_images,
+        image_cmap,
+        shared_vmin,
+        shared_vmax,
+        shared_image_norm,
+        site_limits,
+        site_norms,
+        shared_norm,
+        axt,
+        axt1,
+    )
     traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps)
     draw_trajectory_and_ipps(ax, traj_ctx, axt)
     if plot_geodetic_traj:
@@ -430,5 +467,5 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None,
         lambda args: f"../mapped/GNEISS_launch_science_fast_{args.date}_{sanitize_time_for_filename(args.time)}.png",
         "../mapped/GNEISS_launch_science_fast.png",
         brightness_markers=brightness_markers,
+        shared_norm=shared_norm,
     )
-
