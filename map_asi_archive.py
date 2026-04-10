@@ -104,7 +104,8 @@ def main():
     try:
         pfisr = retrieve_pfisr(apex=apex)
     except Exception as e:
-        print(f"Could not retrieve PFISR data: {e}")
+        if "resolvedvelocities module is not installed" not in str(e):
+            print(f"Could not retrieve PFISR data: {e}")
 
     frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
 
@@ -174,4 +175,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

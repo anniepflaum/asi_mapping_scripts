@@ -1,5 +1,6 @@
 import csv
 from inspect import currentframe
+from pathlib import Path
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -41,20 +42,95 @@ def channel_label(color):
     return "Red Channel Intensity" if str(color).lower() == "red" else "Green Channel Intensity"
 
 
+def print_warning(message):
+    print(f"Warning: {message}")
+
+
 def load_receivers(path=RECEIVERS_PATH):
-    with open(path, "r", encoding="utf-8", newline="") as fd:
-        reader = csv.DictReader(fd)
-        return [
-            {
-                "name": row["Name"].strip(),
-                "acronym": row["acronym"].strip(),
-                "lon": float(row["Lon"]),
-                "lat": float(row["Lat"]),
-                "alt_m": float(row.get("Alt_m", 0.0) or 0.0),
-            }
-            for row in reader
-            if row.get("Lon") and row.get("Lat")
-        ]
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as fd:
+            reader = csv.DictReader(fd)
+            return [
+                {
+                    "name": row["Name"].strip(),
+                    "acronym": row["acronym"].strip(),
+                    "lon": float(row["Lon"]),
+                    "lat": float(row["Lat"]),
+                    "alt_m": float(row.get("Alt_m", 0.0) or 0.0),
+                }
+                for row in reader
+                if row.get("Lon") and row.get("Lat")
+            ]
+    except FileNotFoundError:
+        print_warning(f"Receiver file not found: {path}. Receiver and IPP overlays will be skipped.")
+        return []
+
+
+def empty_traj_context():
+    return {"lat": None, "lon": None, "lat_minute": None, "lon_minute": None, "lat_map": None, "lon_map": None, "ipps": []}
+
+
+def empty_geodetic_traj_context():
+    return {"lat": None, "lon": None, "lat_minute": None, "lon_minute": None, "lat_map": None, "lon_map": None}
+
+
+def load_single_trajectory_context(traj_path, map_time, color, receivers, plot_ipps, rocket_label):
+    try:
+        lat, lon, latm, lonm, _lata, _lona, lat_map, lon_map = load_traj(str(traj_path), map_time=map_time, color=color)
+    except FileNotFoundError:
+        print_warning(f"{rocket_label} trajectory file not found: {traj_path}. Trajectory overlay will be skipped.")
+        return empty_traj_context()
+
+    ipps = []
+    if plot_ipps:
+        try:
+            rocket_geo = lookup_traj_geodetic_position(build_traj_lookup(str(traj_path), color=color), map_time)
+            ipps = compute_receiver_ipps(receivers, rocket_geo, mapped_apex_height(color))
+        except FileNotFoundError:
+            print_warning(f"{rocket_label} trajectory file not found while computing IPPs: {traj_path}. IPP overlay will be skipped.")
+        except ValueError as exc:
+            print_warning(f"Could not compute {rocket_label} IPPs from {Path(traj_path).name}: {exc}")
+
+    return {"lat": lat, "lon": lon, "lat_minute": latm, "lon_minute": lonm, "lat_map": lat_map, "lon_map": lon_map, "ipps": ipps}
+
+
+def load_single_geodetic_trajectory_context(traj_path, map_time, rocket_label):
+    try:
+        utc_times, _flight_times, lats, lons, _alts = load_traj_records(str(traj_path))
+    except FileNotFoundError:
+        print_warning(f"{rocket_label} trajectory file not found: {traj_path}. Geodetic trajectory overlay will be skipped.")
+        return empty_geodetic_traj_context()
+
+    idx = fixed_utc_minute_marker_indices(utc_times, second_of_minute=trajectory_marker_second(str(traj_path)))
+
+    lat_map = None
+    lon_map = None
+    if map_time is not None and utc_times.size > 0:
+        map_sec = hhmmss_fractional_to_seconds(map_time)
+        if utc_times[0] <= map_sec <= utc_times[-1]:
+            sample_idx = int(np.argmin(np.abs(utc_times - map_sec)))
+            lat_map = float(lats[sample_idx])
+            lon_map = float(lons[sample_idx])
+
+    return {
+        "lat": lats,
+        "lon": lons,
+        "lat_minute": lats[idx].squeeze() if idx.size > 0 else None,
+        "lon_minute": lons[idx].squeeze() if idx.size > 0 else None,
+        "lat_map": lat_map,
+        "lon_map": lon_map,
+    }
+
+
+def safe_launch_start_from_traj(traj_path, rocket_label):
+    try:
+        return get_launch_start_from_traj_csv(str(traj_path))
+    except FileNotFoundError:
+        print_warning(f"{rocket_label} trajectory file not found: {traj_path}. Time-since-launch label will be omitted.")
+        return None
+    except ValueError as exc:
+        print_warning(f"Could not derive launch time from {Path(traj_path).name}: {exc}")
+        return None
 
 
 def draw_receivers(ax, receivers, axtrans):
@@ -111,68 +187,30 @@ def build_time_label(args):
         return ""
     date_str = args.date
     time_str = args.time
-    left_tplus = format_time_since_launch(time_str, get_launch_start_from_traj_csv(str(LEFT_TRAJECTORY_PATH)))
-    right_tplus = format_time_since_launch(time_str, get_launch_start_from_traj_csv(str(RIGHT_TRAJECTORY_PATH)))
-    return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}\n36.397 {left_tplus} | 36.398 {right_tplus}"
+    left_tplus = format_time_since_launch(time_str, safe_launch_start_from_traj(LEFT_TRAJECTORY_PATH, "36.397"))
+    right_tplus = format_time_since_launch(time_str, safe_launch_start_from_traj(RIGHT_TRAJECTORY_PATH, "36.398"))
+    tplus_parts = []
+    if left_tplus is not None:
+        tplus_parts.append(f"36.397 {left_tplus}")
+    if right_tplus is not None:
+        tplus_parts.append(f"36.398 {right_tplus}")
+    if not tplus_parts:
+        return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}"
+    return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}\n" + " | ".join(tplus_parts)
 
 
 def load_trajectory_context(map_time, color, receivers, plot_ipps):
-    lat1, lon1, latm1, lonm1, _lata1, _lona1, lat_map1, lon_map1 = load_traj(str(LEFT_TRAJECTORY_PATH), map_time=map_time, color=color)
-    lat2, lon2, latm2, lonm2, _lata2, _lona2, lat_map2, lon_map2 = load_traj(str(RIGHT_TRAJECTORY_PATH), map_time=map_time, color=color)
-    left_ipps = []
-    right_ipps = []
-    if plot_ipps:
-        left_geo = lookup_traj_geodetic_position(build_traj_lookup(str(LEFT_TRAJECTORY_PATH), color=color), map_time)
-        right_geo = lookup_traj_geodetic_position(build_traj_lookup(str(RIGHT_TRAJECTORY_PATH), color=color), map_time)
-        ipp_height_km = mapped_apex_height(color)
-        left_ipps = compute_receiver_ipps(receivers, left_geo, ipp_height_km)
-        right_ipps = compute_receiver_ipps(receivers, right_geo, ipp_height_km)
     return {
-        "left": {"lat": lat1, "lon": lon1, "lat_minute": latm1, "lon_minute": lonm1, "lat_map": lat_map1, "lon_map": lon_map1, "ipps": left_ipps},
-        "right": {"lat": lat2, "lon": lon2, "lat_minute": latm2, "lon_minute": lonm2, "lat_map": lat_map2, "lon_map": lon_map2, "ipps": right_ipps},
+        "left": load_single_trajectory_context(LEFT_TRAJECTORY_PATH, map_time, color, receivers, plot_ipps, "36.397"),
+        "right": load_single_trajectory_context(RIGHT_TRAJECTORY_PATH, map_time, color, receivers, plot_ipps, "36.398"),
     }
 
 
 
 def load_geodetic_trajectory_context(map_time):
-    left_utc_times, left_flight_times, left_lats, left_lons, _left_alts = load_traj_records(str(LEFT_TRAJECTORY_PATH))
-    right_utc_times, right_flight_times, right_lats, right_lons, _right_alts = load_traj_records(str(RIGHT_TRAJECTORY_PATH))
-
-    left_idx = fixed_utc_minute_marker_indices(left_utc_times, second_of_minute=trajectory_marker_second(str(LEFT_TRAJECTORY_PATH)))
-    right_idx = fixed_utc_minute_marker_indices(right_utc_times, second_of_minute=trajectory_marker_second(str(RIGHT_TRAJECTORY_PATH)))
-
-    left_lat_map = None
-    left_lon_map = None
-    right_lat_map = None
-    right_lon_map = None
-    if map_time is not None:
-        map_sec = hhmmss_fractional_to_seconds(map_time)
-        if left_utc_times[0] <= map_sec <= left_utc_times[-1]:
-            idx = int(np.argmin(np.abs(left_utc_times - map_sec)))
-            left_lat_map = float(left_lats[idx])
-            left_lon_map = float(left_lons[idx])
-        if right_utc_times[0] <= map_sec <= right_utc_times[-1]:
-            idx = int(np.argmin(np.abs(right_utc_times - map_sec)))
-            right_lat_map = float(right_lats[idx])
-            right_lon_map = float(right_lons[idx])
-
     return {
-        "left": {
-            "lat": left_lats,
-            "lon": left_lons,
-            "lat_minute": left_lats[left_idx].squeeze(),
-            "lon_minute": left_lons[left_idx].squeeze(),
-            "lat_map": left_lat_map,
-            "lon_map": left_lon_map,
-        },
-        "right": {
-            "lat": right_lats,
-            "lon": right_lons,
-            "lat_minute": right_lats[right_idx].squeeze(),
-            "lon_minute": right_lons[right_idx].squeeze(),
-            "lat_map": right_lat_map,
-            "lon_map": right_lon_map,
-        },
+        "left": load_single_geodetic_trajectory_context(LEFT_TRAJECTORY_PATH, map_time, "36.397"),
+        "right": load_single_geodetic_trajectory_context(RIGHT_TRAJECTORY_PATH, map_time, "36.398"),
     }
 
 
@@ -279,10 +317,14 @@ def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, vm
 def draw_trajectory_and_ipps(ax, traj_ctx, axtrans):
     left = traj_ctx["left"]
     right = traj_ctx["right"]
-    ax.plot(left["lon"], left["lat"], color="red", label="GNEISS trajectory", zorder=7, transform=axtrans)
-    ax.scatter(left["lon_minute"], left["lat_minute"], color="red", s=15, zorder=7, transform=axtrans)
-    ax.plot(right["lon"], right["lat"], color="red", zorder=7, transform=axtrans)
-    ax.scatter(right["lon_minute"], right["lat_minute"], color="red", s=15, zorder=7, transform=axtrans)
+    if left["lat"] is not None and left["lon"] is not None:
+        ax.plot(left["lon"], left["lat"], color="red", label="GNEISS trajectory", zorder=7, transform=axtrans)
+    if left["lat_minute"] is not None and left["lon_minute"] is not None:
+        ax.scatter(left["lon_minute"], left["lat_minute"], color="red", s=15, zorder=7, transform=axtrans)
+    if right["lat"] is not None and right["lon"] is not None:
+        ax.plot(right["lon"], right["lat"], color="red", zorder=7, transform=axtrans)
+    if right["lat_minute"] is not None and right["lon_minute"] is not None:
+        ax.scatter(right["lon_minute"], right["lat_minute"], color="red", s=15, zorder=7, transform=axtrans)
     if left["lat_map"] is not None and left["lon_map"] is not None:
         ax.scatter(left["lon_map"], left["lat_map"], color="orange", s=50, marker="o", zorder=8, label="Position at map time", transform=axtrans)
     if right["lat_map"] is not None and right["lon_map"] is not None:
@@ -301,10 +343,14 @@ def draw_trajectory_and_ipps(ax, traj_ctx, axtrans):
 def draw_geodetic_trajectory(ax, geodetic_traj_ctx, axtrans):
     left = geodetic_traj_ctx["left"]
     right = geodetic_traj_ctx["right"]
-    ax.plot(left["lon"], left["lat"], color="blue", label="GNEISS geodetic trajectory", transform=axtrans, zorder=6)
-    ax.scatter(left["lon_minute"], left["lat_minute"], color="blue", s=15, transform=axtrans, zorder=6)
-    ax.plot(right["lon"], right["lat"], color="blue", transform=axtrans, zorder=6)
-    ax.scatter(right["lon_minute"], right["lat_minute"], color="blue", s=15, transform=axtrans, zorder=6)
+    if left["lat"] is not None and left["lon"] is not None:
+        ax.plot(left["lon"], left["lat"], color="blue", label="GNEISS geodetic trajectory", transform=axtrans, zorder=6)
+    if left["lat_minute"] is not None and left["lon_minute"] is not None:
+        ax.scatter(left["lon_minute"], left["lat_minute"], color="blue", s=15, transform=axtrans, zorder=6)
+    if right["lat"] is not None and right["lon"] is not None:
+        ax.plot(right["lon"], right["lat"], color="blue", transform=axtrans, zorder=6)
+    if right["lat_minute"] is not None and right["lon_minute"] is not None:
+        ax.scatter(right["lon_minute"], right["lat_minute"], color="blue", s=15, transform=axtrans, zorder=6)
     if left["lat_map"] is not None and left["lon_map"] is not None:
         ax.scatter(left["lon_map"], left["lat_map"], color="blue", s=40, marker="o", transform=axtrans, zorder=7)
     if right["lat_map"] is not None and right["lon_map"] is not None:
@@ -352,8 +398,8 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False):
-    receivers = load_receivers()
+def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False):
+    receivers = load_receivers() if (plot_receivers or plot_ipps) else []
     if pretty:
         fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex)
     else:
@@ -385,6 +431,4 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None,
         "../mapped/GNEISS_launch_science_fast.png",
         brightness_markers=brightness_markers,
     )
-
-
 
