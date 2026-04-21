@@ -146,7 +146,7 @@ def main():
     tiff_metadata = {}
     for site in ["ARV", "VEE", "BVR"]:
         if site in selected_sites:
-            candidates = get_site_tiff_candidates(site, args.date, args.color, tiff_overrides[site])
+            candidates = get_site_tiff_candidates(site, args.date, args.color)
             tiff_metadata[site] = build_tiff_metadata(candidates, frame_interval)
 
     left_traj = build_traj_lookup(str(GNEISS_LEFT_TRAJECTORY_PATH), color=args.color)

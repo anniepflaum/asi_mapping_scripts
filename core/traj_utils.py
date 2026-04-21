@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
-"""Shared GPS-export trajectory CSV helpers."""
+"""Shared GPS-export trajectory helpers for CSV and XLSX mission products."""
 
 import csv
+import datetime as dt
 from pathlib import Path
 import re
+from xml.etree import ElementTree as ET
+from zipfile import ZipFile
 
 import numpy as np
 from apexpy import Apex
 
-from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
+from core.paths import (
+    GIRAFF_LEFT_TRAJECTORY_PATH,
+    GIRAFF_RIGHT_TRAJECTORY_PATH,
+    GNEISS_LEFT_TRAJECTORY_PATH,
+    GNEISS_RIGHT_TRAJECTORY_PATH,
+    MISSION_TRAJECTORY_PATHS,
+)
 from core.time_utils import hhmmss_fractional_to_seconds
 
 
@@ -19,6 +28,14 @@ FLIGHT_TIME_COLUMN = "Flight Time (Official T0)"
 LAT_COLUMN = "Latitude"
 LON_COLUMN = "Longitude"
 ALT_COLUMN = "Altitude (km)"
+XLSX_NS = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+XLSX_FLIGHT_TIME_COLUMN = "Flight Time"
+XLSX_LAT_COLUMN = "Lat"
+XLSX_LON_COLUMN = "Long"
+XLSX_ALT_COLUMN = "Alt"
+XLSX_GPS_MSEC_COLUMN = "GPS Time (mSec of week)"
+XLSX_GPS_WEEK_COLUMN = "GPS Week"
+GIRAFF_LAUNCH_DATETIME = dt.datetime(2025, 2, 2)
 
 
 def mapped_apex_height(color="green"):
@@ -52,8 +69,26 @@ def format_seconds_of_day(seconds):
     return f"{base}.{frac_str}" if frac_str else base
 
 
+def mission_trajectory_paths(mission):
+    mission_key = str(mission).upper()
+    if mission_key not in MISSION_TRAJECTORY_PATHS:
+        raise ValueError(f"Unsupported mission: {mission}")
+    return MISSION_TRAJECTORY_PATHS[mission_key]
+
+
+def trajectory_display_labels(mission):
+    mission_key = str(mission).upper()
+    if mission_key == "GIRAFF":
+        return {"left": "36381 Main", "right": "36381 Sub", "left_tag": "Main", "right_tag": "Sub"}
+    return {"left": "36.397", "right": "36.398", "left_tag": "397", "right_tag": "398"}
+
+
 def load_traj_records(filename):
     """Load a GPS trajectory export and return UTC time, flight time, and position arrays."""
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".xlsx":
+        return load_traj_records_xlsx(filename)
+
     with open(filename, "r", encoding="utf-8", newline="") as fd:
         reader = csv.DictReader(fd)
         rows = [row for row in reader if row.get(UTC_TIME_COLUMN)]
@@ -68,10 +103,115 @@ def load_traj_records(filename):
     return utc_times, flight_times, lats, lons, alts
 
 
+def xlsx_cell_ref_to_index(ref):
+    letters = "".join(ch for ch in ref if ch.isalpha())
+    idx = 0
+    for ch in letters:
+        idx = idx * 26 + (ord(ch.upper()) - ord("A") + 1)
+    return idx - 1
+
+
+def load_xlsx_shared_strings(xlsx_path):
+    try:
+        with ZipFile(xlsx_path) as zf, zf.open("xl/sharedStrings.xml") as fd:
+            root = ET.parse(fd).getroot()
+    except KeyError:
+        return []
+
+    strings = []
+    for si in root.findall("main:si", XLSX_NS):
+        text_parts = [node.text or "" for node in si.findall(".//main:t", XLSX_NS)]
+        strings.append("".join(text_parts))
+    return strings
+
+
+def iter_xlsx_sheet_rows(xlsx_path, sheet_name="xl/worksheets/sheet1.xml"):
+    shared_strings = load_xlsx_shared_strings(xlsx_path)
+    with ZipFile(xlsx_path) as zf, zf.open(sheet_name) as fd:
+        root = ET.parse(fd).getroot()
+
+    for row in root.findall(".//main:sheetData/main:row", XLSX_NS):
+        values = {}
+        for cell in row.findall("main:c", XLSX_NS):
+            ref = cell.get("r", "")
+            idx = xlsx_cell_ref_to_index(ref)
+            cell_type = cell.get("t")
+            value_node = cell.find("main:v", XLSX_NS)
+            value = value_node.text if value_node is not None else ""
+            if cell_type == "s" and value:
+                value = shared_strings[int(value)]
+            values[idx] = value
+        if values:
+            width = max(values) + 1
+            yield [values.get(i, "") for i in range(width)]
+
+
+def gps_msec_of_week_to_seconds_of_day(value):
+    milliseconds = float(value)
+    seconds_of_week = milliseconds / 1000.0
+    return float(seconds_of_week % 86400.0)
+
+
+def parse_giraff_sample_datetime(gps_msec_value):
+    """
+    Hardwire GIRAFF workbook samples to the Feb. 2, 2025 UTC launch date.
+    The workbook's GPS week values are not used for calendar reconstruction.
+    """
+    return GIRAFF_LAUNCH_DATETIME + dt.timedelta(seconds=gps_msec_of_week_to_seconds_of_day(gps_msec_value))
+
+
+def load_traj_records_xlsx(filename):
+    """Load a mission trajectory workbook and return UTC time, flight time, and position arrays."""
+    rows = list(iter_xlsx_sheet_rows(filename))
+    if not rows:
+        raise ValueError(f"No trajectory samples found in {filename}")
+
+    header = [str(item).strip() for item in rows[0]]
+    index_by_name = {name: idx for idx, name in enumerate(header) if name}
+    required = {
+        XLSX_FLIGHT_TIME_COLUMN,
+        XLSX_LAT_COLUMN,
+        XLSX_LON_COLUMN,
+        XLSX_ALT_COLUMN,
+        XLSX_GPS_MSEC_COLUMN,
+        XLSX_GPS_WEEK_COLUMN,
+    }
+    missing = sorted(required - set(index_by_name))
+    if missing:
+        raise ValueError(f"Missing required XLSX trajectory columns in {filename}: {', '.join(missing)}")
+
+    samples = []
+    for row in rows[1:]:
+        gps_value = row[index_by_name[XLSX_GPS_MSEC_COLUMN]] if index_by_name[XLSX_GPS_MSEC_COLUMN] < len(row) else ""
+        if gps_value in ("", None):
+            continue
+        samples.append(row)
+    if not samples:
+        raise ValueError(f"No trajectory samples found in {filename}")
+
+    sample_datetimes = np.array(
+        [parse_giraff_sample_datetime(row[index_by_name[XLSX_GPS_MSEC_COLUMN]]) for row in samples],
+        dtype=object,
+    )
+    utc_times = np.array(
+        [(sample_dt - GIRAFF_LAUNCH_DATETIME).total_seconds() for sample_dt in sample_datetimes],
+        dtype=float,
+    )
+    flight_times = np.array([float(row[index_by_name[XLSX_FLIGHT_TIME_COLUMN]]) for row in samples], dtype=float)
+    lats = np.array([float(row[index_by_name[XLSX_LAT_COLUMN]]) for row in samples], dtype=float)
+    lons = np.array([float(row[index_by_name[XLSX_LON_COLUMN]]) for row in samples], dtype=float)
+    alts = np.array([float(row[index_by_name[XLSX_ALT_COLUMN]]) for row in samples], dtype=float)
+    order = np.lexsort((flight_times, utc_times))
+    utc_times = utc_times[order]
+    flight_times = flight_times[order]
+    lats = lats[order]
+    lons = lons[order]
+    alts = alts[order]
+    return utc_times, flight_times, lats, lons, alts
+
+
 def get_launch_start_from_traj_csv(filename):
     """Estimate T0 launch time from GPS UTC and official flight-time columns."""
-    if not filename.lower().endswith(".csv"):
-        raise ValueError(f"Trajectory input must be a GPS export CSV: {filename}")
     utc_times, flight_times, _lats, _lons, _alts = load_traj_records(filename)
     launch_seconds = np.nanmedian(utc_times - flight_times)
     return format_seconds_of_day(float(launch_seconds))
@@ -87,6 +227,8 @@ def format_time_since_launch(map_time, launch_start):
 
 def fixed_utc_minute_marker_indices(utc_times, second_of_minute=30.0):
     """Return nearest-sample indices for fixed UTC minute markers, e.g. HH:MM:30."""
+    if second_of_minute is None:
+        return np.array([], dtype=int)
     utc_times = np.asarray(utc_times, dtype=float)
     if utc_times.size == 0:
         return np.array([], dtype=int)
@@ -109,16 +251,18 @@ def trajectory_marker_second(filename):
         return 0.0
     if path_name == GNEISS_RIGHT_TRAJECTORY_PATH.name or "36398" in path_name:
         return 30.0
+    if path_name == GIRAFF_LEFT_TRAJECTORY_PATH.name or "MAIN_PAYLOAD" in path_name:
+        return None
+    if path_name == GIRAFF_RIGHT_TRAJECTORY_PATH.name or "SUB_PAYLOAD" in path_name:
+        return None
     return 30.0
 
 
 def load_traj(filename, map_time=None, color="green"):
     """
-    Load rocket trajectory from a GPS export CSV.
+    Load rocket trajectory from a GPS export file.
     Map lat/lon to the color-specific altitude and optionally return the nearest map-time point.
     """
-    if not filename.lower().endswith(".csv"):
-        raise ValueError(f"Trajectory input must be a GPS export CSV: {filename}")
     utc_times, flight_times, lats, lons, alts = load_traj_records(filename)
 
     lats, lons, _ = apex.map_to_height(lats, lons, alts, mapped_apex_height(color))

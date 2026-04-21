@@ -47,7 +47,7 @@ def choose_image_cmap(colorbar_color, color):
     return "Reds" if str(color).lower() == "red" else "Greens"
 
 
-def compute_reference_norm_limits(skymaps, selected_sites, date, ref_time_str, color, frame_interval, colorbar_scale="linear"):
+def compute_reference_norm_limits(skymaps, selected_sites, date, ref_time_str, color, frame_interval, colorbar_scale="linear", mission="GNEISS"):
     """
     Compute shared normalization limits from a fixed reference time using
     post-mask main-map pixels across currently selected sites.
@@ -58,7 +58,7 @@ def compute_reference_norm_limits(skymaps, selected_sites, date, ref_time_str, c
         if site not in selected_sites:
             continue
         try:
-            tiff_candidates = get_site_tiff_candidates(site, date, color)
+            tiff_candidates = get_site_tiff_candidates(site, date, color, mission=mission)
             im_raw, _im_display = load_best_frame_from_tiffs(
                 site,
                 tiff_candidates,

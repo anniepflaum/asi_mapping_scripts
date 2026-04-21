@@ -19,7 +19,7 @@ def parse_tiff_start_datetime(tiff_path):
     return dt.datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
 
 
-def get_site_tiff_candidates(site, date_str, color, override_dirs=None):
+def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission="GNEISS"):
     """
     Return candidate TIFF paths for a site.
     Priority:
@@ -32,7 +32,7 @@ def get_site_tiff_candidates(site, date_str, color, override_dirs=None):
     site_prefixes = [site]
     dirs_to_search = list(override_dirs) if override_dirs else [f"../raw_tiffs/{color}/{site}"]
     if site == "VEE":
-        alt_dir = f"../raw_tiffs/{color}/VEE/GNEISS"
+        alt_dir = f"../raw_tiffs/{color}/VEE/{str(mission).upper()}"
         if alt_dir not in dirs_to_search:
             dirs_to_search.append(alt_dir)
 

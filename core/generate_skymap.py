@@ -93,9 +93,19 @@ def load_PKR():
 
 
 # Venetie (VEE)
-def load_VEE():
+def load_VEE(mission="GNEISS"):
 
+    mission_key = str(mission).upper()
     site_lon, site_lat = [-146.407,  67.013]
+    if mission_key == "GIRAFF":
+        with h5py.File('../starmaps/VEE/GIRAFF/sok_pixelcoords.h5', 'r') as fd:
+            latmap = fd['Latitude'][()].copy()
+            lonmap = fd['Longitude'][()].copy()
+            azmap = fd['Azimuth'][()].copy()
+            elmap = fd['Elevation'][()].copy()
+            mask = fd['Mask'][()].copy().astype(bool)
+        return site_lat, site_lon, azmap, elmap, mask, latmap, lonmap
+
     azdat = readsav('../starmaps/VEE/GNEISS/VEE_GASI_20260210_050100_rot5_full_Az.sav', python_dict=True)
     eldat = readsav('../starmaps/VEE/GNEISS/VEE_GASI_20260210_050100_rot5_full_El.sav', python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
@@ -137,4 +147,3 @@ def load_ARV(color="green"):
     mask = elmap < 15.
 
     return site_lat, site_lon, azmap, elmap, mask
-
