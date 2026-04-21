@@ -25,17 +25,16 @@ def get_site_tiff_candidates(site, date_str, color, override_dirs=None):
     Priority:
     1) Explicit override directories if provided.
     2) Auto-discovered TIFFs in ../raw_tiffs/<COLOR>/<SITE>/.
+       VEE green TIFFs may also live in ../raw_tiffs/<COLOR>/VEE/GNEISS/.
     """
     if isinstance(override_dirs, str):
         override_dirs = [override_dirs]
+    site_prefixes = [site]
     dirs_to_search = list(override_dirs) if override_dirs else [f"../raw_tiffs/{color}/{site}"]
-    if site == "BVR":
-        alt_dir = f"../raw_tiffs/{color}/BRV"
+    if site == "VEE":
+        alt_dir = f"../raw_tiffs/{color}/VEE/GNEISS"
         if alt_dir not in dirs_to_search:
             dirs_to_search.append(alt_dir)
-        site_prefixes = ["BVR", "BRV"]
-    else:
-        site_prefixes = [site]
 
     matched_paths = []
     searched_patterns = []

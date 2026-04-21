@@ -12,7 +12,7 @@ import numpy as np
 import magcoordmap as mcm
 from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
-from core.paths import COAST_LAT_PATH, COAST_LON_PATH, LEFT_TRAJECTORY_PATH, RECEIVERS_PATH, RIGHT_TRAJECTORY_PATH
+from core.paths import COAST_LAT_PATH, COAST_LON_PATH, GNEISS_LEFT_TRAJECTORY_PATH, RECEIVERS_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
 from core.plot_norm import choose_image_cmap, compute_linear_image_limits, compute_log_image_limits
 from core.time_utils import format_time_label, hhmmss_fractional_to_seconds, sanitize_time_for_filename
 from core.traj_utils import (
@@ -187,8 +187,8 @@ def build_time_label(args):
         return ""
     date_str = args.date
     time_str = args.time
-    left_tplus = format_time_since_launch(time_str, safe_launch_start_from_traj(LEFT_TRAJECTORY_PATH, "36.397"))
-    right_tplus = format_time_since_launch(time_str, safe_launch_start_from_traj(RIGHT_TRAJECTORY_PATH, "36.398"))
+    left_tplus = format_time_since_launch(time_str, safe_launch_start_from_traj(GNEISS_LEFT_TRAJECTORY_PATH, "36.397"))
+    right_tplus = format_time_since_launch(time_str, safe_launch_start_from_traj(GNEISS_RIGHT_TRAJECTORY_PATH, "36.398"))
     tplus_parts = []
     if left_tplus is not None:
         tplus_parts.append(f"36.397 {left_tplus}")
@@ -201,16 +201,16 @@ def build_time_label(args):
 
 def load_trajectory_context(map_time, color, receivers, plot_ipps):
     return {
-        "left": load_single_trajectory_context(LEFT_TRAJECTORY_PATH, map_time, color, receivers, plot_ipps, "36.397"),
-        "right": load_single_trajectory_context(RIGHT_TRAJECTORY_PATH, map_time, color, receivers, plot_ipps, "36.398"),
+        "left": load_single_trajectory_context(GNEISS_LEFT_TRAJECTORY_PATH, map_time, color, receivers, plot_ipps, "36.397"),
+        "right": load_single_trajectory_context(GNEISS_RIGHT_TRAJECTORY_PATH, map_time, color, receivers, plot_ipps, "36.398"),
     }
 
 
 
 def load_geodetic_trajectory_context(map_time):
     return {
-        "left": load_single_geodetic_trajectory_context(LEFT_TRAJECTORY_PATH, map_time, "36.397"),
-        "right": load_single_geodetic_trajectory_context(RIGHT_TRAJECTORY_PATH, map_time, "36.398"),
+        "left": load_single_geodetic_trajectory_context(GNEISS_LEFT_TRAJECTORY_PATH, map_time, "36.397"),
+        "right": load_single_geodetic_trajectory_context(GNEISS_RIGHT_TRAJECTORY_PATH, map_time, "36.398"),
     }
 
 

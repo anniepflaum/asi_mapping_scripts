@@ -17,6 +17,7 @@ Example:
 
 import argparse
 import datetime as dt
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -48,6 +49,12 @@ def print_progress(step_idx, total_steps, time_arg):
     sys.stdout.flush()
     if step_idx >= total_steps:
         sys.stdout.write("\n")
+
+
+def clear_progress_line():
+    cols = shutil.get_terminal_size(fallback=(80, 24)).columns
+    sys.stdout.write("\r" + (" " * max(cols - 1, 1)) + "\r")
+    sys.stdout.flush()
 
 
 def build_command(args, time_arg):
@@ -134,11 +141,25 @@ def main():
     step_idx = 0
     step_td = dt.timedelta(seconds=args.step)
     t = start_dt
+    print_progress(0, total_steps, format_time_arg(start_dt))
     while t <= end_dt:
-        step_idx += 1
         time_arg = format_time_arg(t)
+        result = subprocess.run(
+            build_command(args, time_arg),
+            check=False,
+            cwd=SCRIPT_DIR,
+            capture_output=True,
+            text=True,
+        )
+        clear_progress_line()
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+        if result.stderr:
+            sys.stderr.write(result.stderr)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, result.args)
+        step_idx += 1
         print_progress(step_idx, total_steps, time_arg)
-        subprocess.run(build_command(args, time_arg), check=True, cwd=SCRIPT_DIR)
         t += step_td
 
 

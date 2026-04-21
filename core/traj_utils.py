@@ -8,7 +8,7 @@ import re
 import numpy as np
 from apexpy import Apex
 
-from core.paths import LEFT_TRAJECTORY_PATH, RIGHT_TRAJECTORY_PATH
+from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
 from core.time_utils import hhmmss_fractional_to_seconds
 
 
@@ -105,9 +105,9 @@ def trajectory_marker_second(filename):
     """Return the fixed UTC second-of-minute used for trajectory marker placement."""
     path_str = str(filename)
     path_name = Path(path_str).name
-    if path_name == LEFT_TRAJECTORY_PATH.name or "36397" in path_name:
+    if path_name == GNEISS_LEFT_TRAJECTORY_PATH.name or "36397" in path_name:
         return 0.0
-    if path_name == RIGHT_TRAJECTORY_PATH.name or "36398" in path_name:
+    if path_name == GNEISS_RIGHT_TRAJECTORY_PATH.name or "36398" in path_name:
         return 30.0
     return 30.0
 

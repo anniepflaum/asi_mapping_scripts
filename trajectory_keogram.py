@@ -7,7 +7,7 @@ from pathlib import Path
 
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
-from core.paths import LEFT_TRAJECTORY_PATH, RIGHT_TRAJECTORY_PATH
+from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
 from core.skymaps import load_skymaps
 import matplotlib.dates as mdates
 import matplotlib as mpl
@@ -120,9 +120,6 @@ def main():
     ap.add_argument("--sites", nargs="*", default=["ARV", "BVR", "VEE"], help="Sites to merge into the keogram")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--output", default=None, help="Output PNG path")
-    ap.add_argument("--arv-tiffs", nargs="*", default=None, help="Optional ARV TIFF folder(s)")
-    ap.add_argument("--vee-tiffs", nargs="*", default=None, help="Optional VEE TIFF folder(s)")
-    ap.add_argument("--bvr-tiffs", nargs="*", default=None, help="Optional BVR TIFF folder(s)")
     args = ap.parse_args()
 
     try:
@@ -145,7 +142,6 @@ def main():
     build_overlap_masks(skymaps)
     samplers = {site: build_site_sampler(skymaps, site) for site in selected_sites if site in skymaps}
 
-    tiff_overrides = {"ARV": args.arv_tiffs, "VEE": args.vee_tiffs, "BVR": args.bvr_tiffs}
     frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
     tiff_metadata = {}
     for site in ["ARV", "VEE", "BVR"]:
@@ -153,8 +149,8 @@ def main():
             candidates = get_site_tiff_candidates(site, args.date, args.color, tiff_overrides[site])
             tiff_metadata[site] = build_tiff_metadata(candidates, frame_interval)
 
-    left_traj = build_traj_lookup(str(LEFT_TRAJECTORY_PATH), color=args.color)
-    right_traj = build_traj_lookup(str(RIGHT_TRAJECTORY_PATH), color=args.color)
+    left_traj = build_traj_lookup(str(GNEISS_LEFT_TRAJECTORY_PATH), color=args.color)
+    right_traj = build_traj_lookup(str(GNEISS_RIGHT_TRAJECTORY_PATH), color=args.color)
     left_lats, left_lons, left_flight_times = resample_traj_by_time(left_traj, args.samples)
     right_lats, right_lons, right_flight_times = resample_traj_by_time(right_traj, args.samples)
 
@@ -206,8 +202,8 @@ def main():
 
     output_path = build_output_path(args.output, args.date, args.start, args.end, args.color)
     fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=True, constrained_layout=True)
-    left_launch_start = get_launch_start_from_traj_csv(str(LEFT_TRAJECTORY_PATH))
-    right_launch_start = get_launch_start_from_traj_csv(str(RIGHT_TRAJECTORY_PATH))
+    left_launch_start = get_launch_start_from_traj_csv(str(GNEISS_LEFT_TRAJECTORY_PATH))
+    right_launch_start = get_launch_start_from_traj_csv(str(GNEISS_RIGHT_TRAJECTORY_PATH))
     left_launch_dt = parse_date_and_time(args.date, left_launch_start)
     right_launch_dt = parse_date_and_time(args.date, right_launch_start)
     log_norm = mpl.colors.LogNorm(vmin=max(vmin, 1e-6), vmax=max(vmax, max(vmin, 1e-6) * 1.0001))

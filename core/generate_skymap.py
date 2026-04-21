@@ -96,8 +96,8 @@ def load_PKR():
 def load_VEE():
 
     site_lon, site_lat = [-146.407,  67.013]
-    azdat = readsav('../starmaps/VEE/VEE_GASI_20260210_050100_rot5_full_Az.sav', python_dict=True)
-    eldat = readsav('../starmaps/VEE/VEE_GASI_20260210_050100_rot5_full_El.sav', python_dict=True)
+    azdat = readsav('../starmaps/VEE/GNEISS/VEE_GASI_20260210_050100_rot5_full_Az.sav', python_dict=True)
+    eldat = readsav('../starmaps/VEE/GNEISS/VEE_GASI_20260210_050100_rot5_full_El.sav', python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
     elmap = eldat[list(eldat.keys())[0]].copy()
 

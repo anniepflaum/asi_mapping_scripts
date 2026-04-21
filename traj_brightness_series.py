@@ -33,7 +33,7 @@ from core.time_utils import (
     sanitize_time_for_filename,
 )
 from core.fetch_url import closest_amisr_png_url
-from core.paths import LEFT_TRAJECTORY_PATH, RECEIVERS_PATH, RIGHT_TRAJECTORY_PATH
+from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, RECEIVERS_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, lookup_traj_position
 
@@ -329,8 +329,8 @@ def main():
         if site in tiff_candidates:
             tiff_metadata[site] = build_tiff_metadata(tiff_candidates[site], frame_interval)
 
-    left_traj = build_traj_lookup(str(LEFT_TRAJECTORY_PATH), color=args.color)
-    right_traj = build_traj_lookup(str(RIGHT_TRAJECTORY_PATH), color=args.color)
+    left_traj = build_traj_lookup(str(GNEISS_LEFT_TRAJECTORY_PATH), color=args.color)
+    right_traj = build_traj_lookup(str(GNEISS_RIGHT_TRAJECTORY_PATH), color=args.color)
 
     out_path = make_output_path(args.output, args.date, args.start, args.end, args.step)
     if not out_path.is_absolute():
