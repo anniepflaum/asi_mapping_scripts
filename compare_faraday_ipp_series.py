@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare 397 IPP brightness series against receiver_data .mat series."""
+"""Compare IPP brightness series against receiver_data .mat series."""
 
 import argparse
 import csv
@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.io import loadmat
 
-from core.paths import GNEISS_LEFT_TRAJECTORY_PATH
+from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
 from core.traj_utils import get_launch_start_from_traj_csv
 from core.time_utils import hhmmss_fractional_to_seconds
 
@@ -30,18 +30,18 @@ def parse_args():
     ap.add_argument(
         "--receiver-dir",
         default="../receiver_data",
-        help="Directory containing receiver .mat files",
+        help="Directory containing receiver .mat files under receiver_data/{rocket}/",
     )
     ap.add_argument(
         "--output-dir",
-        default="./receiver_397_comparisons",
+        default="../mapped/green/faraday_ipp_comparisons",
         help="Directory for output comparison plots",
     )
     return ap.parse_args()
 
 
-def load_ipp_series(csv_path, receiver, launch_start):
-    field = f"397_{receiver}_ipp_brightness"
+def load_ipp_series(csv_path, rocket, receiver, launch_start):
+    field = f"{rocket}_{receiver}_ipp_brightness"
     launch_sec = hhmmss_fractional_to_seconds(launch_start)
     times = []
     brightness = []
@@ -62,10 +62,17 @@ def load_ipp_series(csv_path, receiver, launch_start):
 
 def load_receiver_series(mat_path):
     data = loadmat(mat_path, squeeze_me=True)
-    if "flighttime" not in data or "faradayangle" not in data:
-        raise KeyError(f"{mat_path} missing flighttime/faradayangle")
+    if "flighttime" not in data:
+        raise KeyError(f"{mat_path} missing flighttime")
     flighttime = np.asarray(data["flighttime"], dtype=float).reshape(-1)
-    faradayangle = np.abs(np.asarray(data["faradayangle"], dtype=float).reshape(-1))
+    if "faraday_minus_smoothed" in data:
+        faradayangle = np.asarray(data["faraday_minus_smoothed"], dtype=float).reshape(-1)
+    elif "smoothed_faraday" in data:
+        faradayangle = np.asarray(data["smoothed_faraday"], dtype=float).reshape(-1)
+    elif "faradayangle" in data:
+        faradayangle = np.abs(np.asarray(data["faradayangle"], dtype=float).reshape(-1))
+    else:
+        raise KeyError(f"{mat_path} missing faradayangle/smoothed_faraday/faraday_minus_smoothed")
     return flighttime, faradayangle
 
 
@@ -89,18 +96,55 @@ def scale_to_match(source, target_max):
     return np.asarray(source, dtype=float) * (target_max / source_max), target_max / source_max
 
 
-def make_plot(receiver, ipp_t, ipp_y, rx_t, rx_y, output_path):
+def parse_receiver_mat_path(mat_path):
+    rocket = mat_path.parent.name
+    stem_parts = mat_path.stem.upper().split("_")
+    if len(stem_parts) >= 2 and stem_parts[-1] == rocket:
+        receiver = "_".join(stem_parts[:-1])
+    else:
+        receiver = stem_parts[0]
+    return rocket, receiver
+
+
+def get_launch_start_by_rocket(rocket):
+    traj_paths = {
+        "397": GNEISS_LEFT_TRAJECTORY_PATH,
+        "398": GNEISS_RIGHT_TRAJECTORY_PATH,
+    }
+    if rocket not in traj_paths:
+        raise KeyError(f"Unsupported rocket for launch timing: {rocket}")
+    return get_launch_start_from_traj_csv(str(traj_paths[rocket]))
+
+
+def select_mat_files(receiver_dir):
+    mat_files = sorted(path for path in receiver_dir.glob("*/*.mat") if path.is_file())
+    if not mat_files:
+        raise FileNotFoundError(f"No .mat files found in {receiver_dir}")
+
+    selected = {}
+    for mat_path in mat_files:
+        rocket, receiver = parse_receiver_mat_path(mat_path)
+        key = (rocket, receiver)
+        current = selected.get(key)
+        is_minus_smooth = mat_path.stem.upper().endswith("_MINUS_SMOOTH")
+        current_is_minus_smooth = current is not None and current.stem.upper().endswith("_MINUS_SMOOTH")
+        if current is None or (is_minus_smooth and not current_is_minus_smooth):
+            selected[key] = mat_path
+    return sorted(selected.values())
+
+
+def make_plot(rocket, receiver, ipp_t, ipp_y, rx_t, rx_y, output_path):
     ipp_mask = np.asarray(ipp_t, dtype=float) <= 490.0
     ipp_for_scale = np.asarray(ipp_y, dtype=float)[ipp_mask]
     ipp_max = positive_max(ipp_for_scale)
     rx_scaled, scale = scale_to_match(rx_y, ipp_max)
 
     fig, ax = plt.subplots(figsize=(8, 10))
-    ax.plot(ipp_t, ipp_y, linewidth=1.8, label=f"IPP 397 {receiver} brightness")
-    ax.plot(rx_t, rx_scaled, linewidth=1.4, label=f"{receiver} Faraday angle")
+    ax.plot(ipp_t, ipp_y, linewidth=1.8, label=f"IPP {rocket} {receiver} brightness")
+    ax.plot(rx_t, rx_scaled, linewidth=1.4, label=f"{receiver} {rocket} Faraday angle")
     ax.set_xlabel("Flight Time (s)")
     ax.set_ylabel("Normalized Amplitude (scaled for comparison)")
-    ax.set_title(f"{receiver} vs 397 IPP")
+    ax.set_title(f"{receiver} vs {rocket} IPP")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
 
@@ -130,20 +174,18 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    launch_start = get_launch_start_from_traj_csv(str(GNEISS_LEFT_TRAJECTORY_PATH))
-    mat_files = sorted(path for path in receiver_dir.glob("*.mat") if path.is_file())
-    if not mat_files:
-        raise FileNotFoundError(f"No .mat files found in {receiver_dir}")
+    mat_files = select_mat_files(receiver_dir)
 
     for mat_path in mat_files:
-        receiver = mat_path.stem.upper()
-        ipp_t, ipp_y = load_ipp_series(csv_path, receiver, launch_start)
+        rocket, receiver = parse_receiver_mat_path(mat_path)
+        launch_start = get_launch_start_by_rocket(rocket)
+        ipp_t, ipp_y = load_ipp_series(csv_path, rocket, receiver, launch_start)
         rx_t, rx_y = load_receiver_series(mat_path)
         if ipp_y.size == 0:
-            print(f"{receiver}: no 397 IPP samples in CSV, skipping")
+            print(f"{receiver} {rocket}: no IPP samples in CSV, skipping")
             continue
-        output_path = output_dir / f"{receiver}_397_comparison.png"
-        make_plot(receiver, ipp_t, ipp_y, rx_t, rx_y, output_path)
+        output_path = output_dir / f"{receiver}_{rocket}_comparison.png"
+        make_plot(rocket, receiver, ipp_t, ipp_y, rx_t, rx_y, output_path)
         print(f"Saved {output_path}")
 
 

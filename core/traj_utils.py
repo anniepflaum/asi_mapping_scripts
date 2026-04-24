@@ -13,7 +13,6 @@ from apexpy import Apex
 
 from core.paths import (
     GIRAFF_LEFT_TRAJECTORY_PATH,
-    GIRAFF_RIGHT_TRAJECTORY_PATH,
     GNEISS_LEFT_TRAJECTORY_PATH,
     GNEISS_RIGHT_TRAJECTORY_PATH,
     MISSION_TRAJECTORY_PATHS,
@@ -79,7 +78,7 @@ def mission_trajectory_paths(mission):
 def trajectory_display_labels(mission):
     mission_key = str(mission).upper()
     if mission_key == "GIRAFF":
-        return {"left": "36381 Main", "right": "36381 Sub", "left_tag": "Main", "right_tag": "Sub"}
+        return {"left": "36381 Main", "left_tag": "Main"}
     return {"left": "36.397", "right": "36.398", "left_tag": "397", "right_tag": "398"}
 
 
@@ -252,8 +251,6 @@ def trajectory_marker_second(filename):
     if path_name == GNEISS_RIGHT_TRAJECTORY_PATH.name or "36398" in path_name:
         return 30.0
     if path_name == GIRAFF_LEFT_TRAJECTORY_PATH.name or "MAIN_PAYLOAD" in path_name:
-        return None
-    if path_name == GIRAFF_RIGHT_TRAJECTORY_PATH.name or "SUB_PAYLOAD" in path_name:
         return None
     return 30.0
 

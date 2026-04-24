@@ -193,12 +193,9 @@ def build_time_label(args):
     traj_paths = mission_trajectory_paths(mission)
     labels = trajectory_display_labels(mission)
     left_tplus = format_time_since_launch(time_str, safe_launch_start_from_traj(traj_paths["left"], labels["left"]))
-    right_tplus = format_time_since_launch(time_str, safe_launch_start_from_traj(traj_paths["right"], labels["right"]))
     tplus_parts = []
     if left_tplus is not None:
         tplus_parts.append(f"{labels['left']} {left_tplus}")
-    if right_tplus is not None:
-        tplus_parts.append(f"{labels['right']} {right_tplus}")
     if not tplus_parts:
         return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}"
     return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}\n" + " | ".join(tplus_parts)
@@ -209,7 +206,6 @@ def load_trajectory_context(map_time, color, receivers, plot_ipps, mission="GNEI
     labels = trajectory_display_labels(mission)
     return {
         "left": load_single_trajectory_context(traj_paths["left"], map_time, color, receivers, plot_ipps, labels["left"]),
-        "right": load_single_trajectory_context(traj_paths["right"], map_time, color, receivers, plot_ipps, labels["right"]),
     }
 
 
@@ -219,7 +215,6 @@ def load_geodetic_trajectory_context(map_time, mission="GNEISS"):
     labels = trajectory_display_labels(mission)
     return {
         "left": load_single_geodetic_trajectory_context(traj_paths["left"], map_time, labels["left"]),
-        "right": load_single_geodetic_trajectory_context(traj_paths["right"], map_time, labels["right"]),
     }
 
 
@@ -337,23 +332,15 @@ def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, sh
 
 def draw_trajectory_and_ipps(ax, traj_ctx, axtrans, mission="GNEISS"):
     left = traj_ctx["left"]
-    right = traj_ctx["right"]
     labels = trajectory_display_labels(mission)
     if left["lat"] is not None and left["lon"] is not None:
         ax.plot(left["lon"], left["lat"], color="red", label=f"{mission} trajectory", zorder=7, transform=axtrans)
     if left["lat_minute"] is not None and left["lon_minute"] is not None:
         ax.scatter(left["lon_minute"], left["lat_minute"], color="red", s=15, zorder=7, transform=axtrans)
-    if right["lat"] is not None and right["lon"] is not None:
-        ax.plot(right["lon"], right["lat"], color="red", zorder=7, transform=axtrans)
-    if right["lat_minute"] is not None and right["lon_minute"] is not None:
-        ax.scatter(right["lon_minute"], right["lat_minute"], color="red", s=15, zorder=7, transform=axtrans)
     if left["lat_map"] is not None and left["lon_map"] is not None:
         ax.scatter(left["lon_map"], left["lat_map"], color="orange", s=50, marker="o", zorder=8, label="Position at map time", transform=axtrans)
-    if right["lat_map"] is not None and right["lon_map"] is not None:
-        ax.scatter(right["lon_map"], right["lat_map"], color="orange", s=50, marker="o", zorder=8, transform=axtrans)
     for ipps, ipp_color, text_dy, label in (
         (left["ipps"], "deepskyblue", 0.03, f"{labels['left_tag']} IPP"),
-        (right["ipps"], "magenta", -0.08, f"{labels['right_tag']} IPP"),
     ):
         if not ipps:
             continue
@@ -364,43 +351,30 @@ def draw_trajectory_and_ipps(ax, traj_ctx, axtrans, mission="GNEISS"):
 
 def draw_geodetic_trajectory(ax, geodetic_traj_ctx, axtrans, mission="GNEISS"):
     left = geodetic_traj_ctx["left"]
-    right = geodetic_traj_ctx["right"]
     if left["lat"] is not None and left["lon"] is not None:
         ax.plot(left["lon"], left["lat"], color="blue", label=f"{mission} geodetic trajectory", transform=axtrans, zorder=6)
     if left["lat_minute"] is not None and left["lon_minute"] is not None:
         ax.scatter(left["lon_minute"], left["lat_minute"], color="blue", s=15, transform=axtrans, zorder=6)
-    if right["lat"] is not None and right["lon"] is not None:
-        ax.plot(right["lon"], right["lat"], color="blue", transform=axtrans, zorder=6)
-    if right["lat_minute"] is not None and right["lon_minute"] is not None:
-        ax.scatter(right["lon_minute"], right["lat_minute"], color="blue", s=15, transform=axtrans, zorder=6)
     if left["lat_map"] is not None and left["lon_map"] is not None:
         ax.scatter(left["lon_map"], left["lat_map"], color="blue", s=40, marker="o", transform=axtrans, zorder=7)
-    if right["lat_map"] is not None and right["lon_map"] is not None:
-        ax.scatter(right["lon_map"], right["lat_map"], color="blue", s=40, marker="o", transform=axtrans, zorder=7)
 
 
 def sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw):
-    bright1 = None
-    bright2 = None
+    bright = None
     if imgs_raw is not None:
         left = traj_ctx["left"]
-        right = traj_ctx["right"]
         if left["lat_map"] is not None and left["lon_map"] is not None:
-            bright1 = best_rocket_brightness(left["lat_map"], left["lon_map"], skymaps, imgs_raw)
-        if right["lat_map"] is not None and right["lon_map"] is not None:
-            bright2 = best_rocket_brightness(right["lat_map"], right["lon_map"], skymaps, imgs_raw)
-        if bright1 is not None:
-            print(f"Rocket Left brightness percentile: {bright1['site']} P={bright1['percentile']:.1f} (nearest {bright1['distance_deg']:.3f} deg)")
-        if bright2 is not None:
-            print(f"Rocket Right brightness percentile: {bright2['site']} P={bright2['percentile']:.1f} (nearest {bright2['distance_deg']:.3f} deg)")
-    return bright1, bright2
+            bright = best_rocket_brightness(left["lat_map"], left["lon_map"], skymaps, imgs_raw)
+        if bright is not None:
+            print(f"Rocket brightness percentile: {bright['site']} P={bright['percentile']:.1f} (nearest {bright['distance_deg']:.3f} deg)")
+    return bright
 
 
 def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default_with_args, default_without_args, brightness_markers=None, shared_norm=True, mission="GNEISS"):
     ax.text(0.99, 0.01, label_str, transform=ax.transAxes, fontsize=12, color="w", ha="right", va="bottom", bbox=dict(facecolor="black", alpha=0.5, boxstyle="round,pad=0.2"))
     ax.set_title(f"Mapped ASIs and {mission} trajectory ({color} channel)")
     ax.legend(loc="upper right")
-    if shared_norm and im_handle is not None:
+    if im_handle is not None:
         cax = fig.add_subplot(gs[:, 1])
         cbar = fig.colorbar(im_handle, cax=cax, orientation="vertical")
         cbar.set_label(channel_label(color))
@@ -421,8 +395,6 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
             va="bottom",
             bbox=dict(facecolor="black", alpha=0.5, boxstyle="round,pad=0.2"),
         )
-    else:
-        ax.text(0.01, 0.01, "Per-site normalization", transform=ax.transAxes, fontsize=10, color="w", ha="left", va="bottom", bbox=dict(facecolor="black", alpha=0.5, boxstyle="round,pad=0.2"))
 
     args = get_plot_call_args()
     plt.tight_layout()
@@ -472,12 +444,10 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, bounds=None,
         draw_geodetic_trajectory(ax, load_geodetic_trajectory_context(map_time, mission=mission), axt, mission=mission)
     if plot_receivers:
         draw_receivers(ax, receivers, axt)
-    bright1, bright2 = sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw)
+    bright = sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw)
     brightness_markers = []
-    if bright1 is not None:
-        brightness_markers.append((trajectory_display_labels(mission)["left_tag"], bright1))
-    if bright2 is not None:
-        brightness_markers.append((trajectory_display_labels(mission)["right_tag"], bright2))
+    if bright is not None:
+        brightness_markers.append((trajectory_display_labels(mission)["left_tag"], bright))
     finalize_plot(
         ax,
         fig,

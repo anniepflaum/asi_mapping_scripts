@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
 """
-Build a brightness-vs-time dataset for both GNEISS trajectories.
+Build a brightness-vs-time dataset for mission trajectories.
 
 For each time step in a requested range, this script:
 1) Loads the closest ASI frame per selected site.
-2) Finds each rocket position (left/right trajectory) at that time.
+2) Finds each rocket position at that time.
 3) Samples brightness at rocket position using the same logic as map_asi_archive.py
    (mean of 25 nearest valid pixels, with percentile metadata).
-4) Writes one CSV row per timestamp with left/right values.
+4) Writes one CSV row per timestamp with trajectory brightness values.
 """
 
 import argparse
 import csv
 import datetime as dt
+import os
 import re
 import sys
 from pathlib import Path
 
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
+
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+import numpy as np
 import tifffile
 
 from core.brightness import best_rocket_brightness
@@ -33,9 +39,15 @@ from core.time_utils import (
     sanitize_time_for_filename,
 )
 from core.fetch_url import closest_amisr_png_url
-from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, RECEIVERS_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
+from core.paths import RECEIVERS_PATH
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
-from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, lookup_traj_position
+from core.traj_utils import (
+    build_traj_lookup,
+    lookup_traj_geodetic_position,
+    lookup_traj_position,
+    mission_trajectory_paths,
+    trajectory_display_labels,
+)
 
 
 def format_time_arg(t):
@@ -60,13 +72,17 @@ def print_progress(step_idx, total_steps, time_arg):
         sys.stdout.write("\n")
 
 
-def make_output_path(out_arg, date, start, end, step):
+def series_prefix(mission):
+    return "brightness_vs_time" if str(mission).upper() == "GNEISS" else f"{str(mission).upper()}_brightness_vs_time"
+
+
+def make_output_path(out_arg, mission, date, start, end, step):
     if out_arg:
         return Path(out_arg)
     start_tok = sanitize_time_for_filename(start)
     end_tok = sanitize_time_for_filename(end)
     step_tok = str(step).replace(".", "p")
-    return Path(f"brightness_vs_time_{start_tok}_{end_tok}_step{step_tok}.csv")
+    return Path(f"{series_prefix(mission)}_{start_tok}_{end_tok}_step{step_tok}.csv")
 
 
 def make_plot_output_path(csv_path, output_arg):
@@ -156,30 +172,26 @@ def load_rows_from_csv(csv_path, required_fields):
         return list(reader)
 
 
-def plot_brightness_timeseries(times, left, right, output_path, title, left_site_changes=None, right_site_changes=None):
+def plot_brightness_timeseries(times, series_by_key, output_path, title, site_changes_by_key=None, labels_by_key=None):
     if not times:
         raise ValueError("No rows with iso_time were collected")
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(times, left, linewidth=1.0, color="tab:red", label="397 brightness")
-    ax.plot(times, right, linewidth=1.0, color="tab:blue", label="398 brightness")
-    for idx, change_time in enumerate(left_site_changes or []):
-        ax.axvline(
-            change_time,
-            color="tab:red",
-            linestyle="--",
-            linewidth=1.0,
-            alpha=0.5,
-            label="397 frame site change" if idx == 0 else None,
-        )
-    for idx, change_time in enumerate(right_site_changes or []):
-        ax.axvline(
-            change_time,
-            color="tab:blue",
-            linestyle="--",
-            linewidth=1.0,
-            alpha=0.5,
-            label="398 frame site change" if idx == 0 else None,
-        )
+    colors = {"left": "tab:red", "right": "tab:blue"}
+    labels_by_key = labels_by_key or {}
+    site_changes_by_key = site_changes_by_key or {}
+    for key, values in series_by_key.items():
+        label = labels_by_key.get(key, key)
+        color = colors.get(key)
+        ax.plot(times, values, linewidth=1.0, color=color, label=f"{label} brightness")
+        for idx, change_time in enumerate(site_changes_by_key.get(key, [])):
+            ax.axvline(
+                change_time,
+                color=color,
+                linestyle="--",
+                linewidth=1.0,
+                alpha=0.5,
+                label=f"{label} frame site change" if idx == 0 else None,
+            )
     ax.set_title(title)
     ax.set_xlabel("Time")
     ax.set_yscale("log")
@@ -209,9 +221,10 @@ def load_tiff_frame_with_metadata(site, tiff_metadata, target_dt, frame_interval
 
     candidates = []
     for meta in tiff_metadata:
-        raw_idx = int(round((target_dt - meta["start_dt"]).total_seconds() / frame_interval))
+        file_frame_interval = meta.get("frame_interval") or frame_interval
+        raw_idx = int(round((target_dt - meta["start_dt"]).total_seconds() / file_frame_interval))
         idx = min(max(raw_idx, 0), meta["n_frames"] - 1)
-        frame_dt = meta["start_dt"] + dt.timedelta(seconds=idx * frame_interval)
+        frame_dt = meta["start_dt"] + dt.timedelta(seconds=idx * file_frame_interval)
         candidates.append(
             {
                 "path": meta["path"],
@@ -219,17 +232,31 @@ def load_tiff_frame_with_metadata(site, tiff_metadata, target_dt, frame_interval
                 "frame_dt": frame_dt,
                 "delta_s": abs((frame_dt - target_dt).total_seconds()),
                 "in_range": meta["start_dt"] <= target_dt <= meta["end_dt"],
+                "cache_path": meta.get("cache_path"),
             }
         )
 
     in_range_candidates = [c for c in candidates if c["in_range"]]
     best = min(in_range_candidates or candidates, key=lambda c: c["delta_s"])
 
-    with tifffile.TiffFile(best["path"]) as tif:
-        im = tif.pages[best["idx"]].asarray()
+    if best.get("cache_path"):
+        stack = np.load(best["cache_path"], mmap_mode="r")
+        im = stack[best["idx"]]
+    else:
+        with tifffile.TiffFile(best["path"]) as tif:
+            im = tif.pages[best["idx"]].asarray()
     if im.ndim == 3:
         im = im[:, :, 0]
     return im.astype("float32"), {"site": site, "frame_time": best["frame_dt"].isoformat()}
+
+
+def trajectory_configs(mission):
+    paths = mission_trajectory_paths(mission)
+    labels = trajectory_display_labels(mission)
+    configs = [("left", labels["left_tag"], labels["left"], paths["left"])]
+    if str(mission).upper() != "GIRAFF":
+        configs.append(("right", labels["right_tag"], labels["right"], paths["right"]))
+    return configs
 
 
 def get_site_change_times(rows, fieldname):
@@ -286,11 +313,12 @@ def sample_receiver_ipp_brightnesses(receivers, rocket_geo, skymaps, imgs_raw, i
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", default="20260210", help="Date YYYYMMDD")
+    ap.add_argument("--date", default=None, help="Date YYYYMMDD")
     ap.add_argument("--start", required=True, help="Start time HHMMSS(.fraction)")
     ap.add_argument("--end", required=True, help="End time HHMMSS(.fraction)")
     ap.add_argument("--step", type=float, default=0.05, help="Step size in seconds (default: 0.3)")
-    ap.add_argument("--sites", nargs="*", default=["ARV", "BVR", "VEE", "PKR"], help="Sites to include")
+    ap.add_argument("--sites", nargs="*", default=None, help="Sites to include")
+    ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default="GNEISS", help="Mission dataset to use")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--output", default=None, help="Output CSV path")
     ap.add_argument("--plot-output", default=None, help="Optional output PNG path for the brightness plot")
@@ -298,6 +326,17 @@ def main():
     ap.add_argument("--no-plot", action="store_true", help="Write the CSV only and skip the PNG plot")
     ap.add_argument("--no-csv", action="store_true", help="Skip CSV generation and plot from an existing CSV instead")
     args = ap.parse_args()
+    args.mission = args.mission.upper()
+    if args.date is None:
+        args.date = "20250202" if args.mission == "GIRAFF" else "20260210"
+    if args.sites is None:
+        args.sites = ["VEE"] if args.mission == "GIRAFF" else ["ARV", "BVR", "VEE", "PKR"]
+    if args.mission == "GIRAFF":
+        if args.color != "green":
+            ap.error("--mission GIRAFF only supports --color green")
+        invalid_sites = sorted({site.upper() for site in args.sites} - {"VEE"})
+        if invalid_sites:
+            ap.error(f"--mission GIRAFF only supports VEE; remove site(s): {', '.join(invalid_sites)}")
 
     try:
         parse_hhmmss_fractional(args.start)
@@ -314,7 +353,7 @@ def main():
 
     selected_sites = set(s.upper() for s in args.sites)
     receivers = load_receivers()
-    skymaps = load_skymaps(selected_sites, color=args.color)
+    skymaps = load_skymaps(selected_sites, color=args.color, mission=args.mission)
 
     build_overlap_masks(skymaps)
 
@@ -322,78 +361,80 @@ def main():
     tiff_metadata = {}
     for site in ["ARV", "VEE", "BVR"]:
         if site in selected_sites:
-            tiff_candidates[site] = get_site_tiff_candidates(site, args.date, args.color)
+            tiff_candidates[site] = get_site_tiff_candidates(site, args.date, args.color, mission=args.mission)
 
     frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
     for site in ["ARV", "VEE", "BVR"]:
         if site in tiff_candidates:
             tiff_metadata[site] = build_tiff_metadata(tiff_candidates[site], frame_interval)
 
-    left_traj = build_traj_lookup(str(GNEISS_LEFT_TRAJECTORY_PATH), color=args.color)
-    right_traj = build_traj_lookup(str(GNEISS_RIGHT_TRAJECTORY_PATH), color=args.color)
+    traj_configs = trajectory_configs(args.mission)
+    traj_lookups = {
+        key: build_traj_lookup(str(path), color=args.color)
+        for key, _tag, _label, path in traj_configs
+    }
+    traj_tags = {key: tag for key, tag, _label, _path in traj_configs}
+    traj_labels = {key: label for key, _tag, label, _path in traj_configs}
 
-    out_path = make_output_path(args.output, args.date, args.start, args.end, args.step)
+    out_path = make_output_path(args.output, args.mission, args.date, args.start, args.end, args.step)
     if not out_path.is_absolute():
         out_path = Path("..") / "mapped" / args.color / out_path
 
     if args.no_csv:
         if args.no_plot:
             ap.error("--no-csv cannot be combined with --no-plot")
-        csv_path = find_reusable_csv(out_path, "brightness_vs_time", args.date, args.start, args.end, args.step)
+        csv_path = find_reusable_csv(out_path, series_prefix(args.mission), args.date, args.start, args.end, args.step)
         rows = load_rows_from_csv(
             csv_path,
             [
                 "time",
                 "left_frame_site",
                 "left_brightness",
-                "right_frame_site",
-                "right_brightness",
+                *([field for key in traj_lookups for field in (f"{key}_frame_site", f"{key}_brightness")]),
             ],
         )
         requested_times = set(build_requested_iso_times(args.date, args.start, args.end, args.step))
         rows = [row for row in rows if row.get("time") in requested_times]
         plot_times = [dt.datetime.fromisoformat(row["time"]) for row in rows if row.get("time")]
-        plot_left = [float(row["left_brightness"]) if row.get("left_brightness") else None for row in rows]
-        plot_right = [float(row["right_brightness"]) if row.get("right_brightness") else None for row in rows]
-        left_site_changes = get_site_change_times(rows, "left_frame_site")
-        right_site_changes = get_site_change_times(rows, "right_frame_site")
+        plot_series = {
+            key: [float(row[f"{key}_brightness"]) if row.get(f"{key}_brightness") else None for row in rows]
+            for key in traj_lookups
+        }
+        site_changes = {key: get_site_change_times(rows, f"{key}_frame_site") for key in traj_lookups}
         plot_output = make_plot_output_path(out_path, args.plot_output)
         plot_title = args.plot_title or f"Brightness vs Time ({args.color})"
         plot_brightness_timeseries(
             plot_times,
-            plot_left,
-            plot_right,
+            plot_series,
             plot_output,
             plot_title,
-            left_site_changes=left_site_changes,
-            right_site_changes=right_site_changes,
+            site_changes_by_key=site_changes,
+            labels_by_key=traj_labels,
         )
         print(f"Plotted from existing CSV {csv_path}")
         return
 
-    fieldnames = [
-        "time",
-        "left_frame_site",
-        "left_frame_time",
-        "left_percentile",
-        "left_brightness",
-        "right_frame_site",
-        "right_frame_time",
-        "right_percentile",
-        "right_brightness",
-    ]
+    fieldnames = ["time"]
+    for key in traj_lookups:
+        fieldnames.extend(
+            [
+                f"{key}_frame_site",
+                f"{key}_frame_time",
+                f"{key}_percentile",
+                f"{key}_brightness",
+            ]
+        )
     receiver_fieldnames = ["time"]
-    for rocket_label in ["397", "398"]:
+    for key, tag in traj_tags.items():
         for receiver in receivers:
             acronym = receiver["acronym"]
-            receiver_fieldnames.append(f"{rocket_label}_{acronym}_ipp_brightness")
-            receiver_fieldnames.append(f"{rocket_label}_{acronym}_ipp_site")
+            receiver_fieldnames.append(f"{tag}_{acronym}_ipp_brightness")
+            receiver_fieldnames.append(f"{tag}_{acronym}_ipp_site")
 
     rows = []
     receiver_rows = []
     plot_times = []
-    plot_left = []
-    plot_right = []
+    plot_series = {key: [] for key in traj_lookups}
     step_td = dt.timedelta(seconds=args.step)
     total_steps = count_steps(start_dt, end_dt, args.step)
     step_idx = 0
@@ -429,41 +470,25 @@ def main():
             except Exception as exc:
                 print(f"{time_arg} PKR: frame load failed: {exc}")
 
-        lat_l, lon_l = lookup_traj_position(left_traj, time_arg)
-        lat_r, lon_r = lookup_traj_position(right_traj, time_arg)
-        left_geo = lookup_traj_geodetic_position(left_traj, time_arg)
-        right_geo = lookup_traj_geodetic_position(right_traj, time_arg)
-
-        left = best_rocket_brightness(lat_l, lon_l, skymaps, imgs_raw) if lat_l is not None and lon_l is not None else None
-        right = best_rocket_brightness(lat_r, lon_r, skymaps, imgs_raw) if lat_r is not None and lon_r is not None else None
-        left_receiver_brightnesses, left_receiver_sites = sample_receiver_ipp_brightnesses(receivers, left_geo, skymaps, imgs_raw)
-        right_receiver_brightnesses, right_receiver_sites = sample_receiver_ipp_brightnesses(receivers, right_geo, skymaps, imgs_raw)
-
         plot_times.append(t)
-        plot_left.append(left["raw_brightness"] if left else None)
-        plot_right.append(right["raw_brightness"] if right else None)
-        rows.append(
-            {
-                "time": t.isoformat(),
-                "left_frame_site": frame_info[left["site"]]["site"] if left and left["site"] in frame_info else "",
-                "left_frame_time": frame_info[left["site"]]["frame_time"] if left and left["site"] in frame_info else "",
-                "left_percentile": f"{left['percentile']:.3f}" if left else "",
-                "left_brightness": f"{left['raw_brightness']:.3f}" if left else "",
-                "right_frame_site": frame_info[right["site"]]["site"] if right and right["site"] in frame_info else "",
-                "right_frame_time": frame_info[right["site"]]["frame_time"] if right and right["site"] in frame_info else "",
-                "right_percentile": f"{right['percentile']:.3f}" if right else "",
-                "right_brightness": f"{right['raw_brightness']:.3f}" if right else "",
-            }
-        )
+        row = {"time": t.isoformat()}
         receiver_row = {"time": t.isoformat()}
-        for receiver, brightness, site_name in zip(receivers, left_receiver_brightnesses, left_receiver_sites):
-            acronym = receiver["acronym"]
-            receiver_row[f"397_{acronym}_ipp_brightness"] = f"{brightness:.3f}" if brightness is not None else ""
-            receiver_row[f"397_{acronym}_ipp_site"] = site_name
-        for receiver, brightness, site_name in zip(receivers, right_receiver_brightnesses, right_receiver_sites):
-            acronym = receiver["acronym"]
-            receiver_row[f"398_{acronym}_ipp_brightness"] = f"{brightness:.3f}" if brightness is not None else ""
-            receiver_row[f"398_{acronym}_ipp_site"] = site_name
+        for key, traj_lookup in traj_lookups.items():
+            lat, lon = lookup_traj_position(traj_lookup, time_arg)
+            geo = lookup_traj_geodetic_position(traj_lookup, time_arg)
+            sample = best_rocket_brightness(lat, lon, skymaps, imgs_raw) if lat is not None and lon is not None else None
+            receiver_brightnesses, receiver_sites = sample_receiver_ipp_brightnesses(receivers, geo, skymaps, imgs_raw)
+            plot_series[key].append(sample["raw_brightness"] if sample else None)
+            row[f"{key}_frame_site"] = frame_info[sample["site"]]["site"] if sample and sample["site"] in frame_info else ""
+            row[f"{key}_frame_time"] = frame_info[sample["site"]]["frame_time"] if sample and sample["site"] in frame_info else ""
+            row[f"{key}_percentile"] = f"{sample['percentile']:.3f}" if sample else ""
+            row[f"{key}_brightness"] = f"{sample['raw_brightness']:.3f}" if sample else ""
+            for receiver, brightness, site_name in zip(receivers, receiver_brightnesses, receiver_sites):
+                acronym = receiver["acronym"]
+                tag = traj_tags[key]
+                receiver_row[f"{tag}_{acronym}_ipp_brightness"] = f"{brightness:.3f}" if brightness is not None else ""
+                receiver_row[f"{tag}_{acronym}_ipp_site"] = site_name
+        rows.append(row)
         receiver_rows.append(receiver_row)
         t += step_td
 
@@ -481,18 +506,16 @@ def main():
     print(f"Wrote {len(rows)} rows to {out_path}")
     print(f"Wrote {len(receiver_rows)} rows to {receiver_out_path}")
     if not args.no_plot:
-        left_site_changes = get_site_change_times(rows, "left_frame_site")
-        right_site_changes = get_site_change_times(rows, "right_frame_site")
+        site_changes = {key: get_site_change_times(rows, f"{key}_frame_site") for key in traj_lookups}
         plot_output = make_plot_output_path(out_path, args.plot_output)
         plot_title = args.plot_title or f"Brightness vs Time ({args.color})"
         plot_brightness_timeseries(
             plot_times,
-            plot_left,
-            plot_right,
+            plot_series,
             plot_output,
             plot_title,
-            left_site_changes=left_site_changes,
-            right_site_changes=right_site_changes,
+            site_changes_by_key=site_changes,
+            labels_by_key=traj_labels,
         )
 
 

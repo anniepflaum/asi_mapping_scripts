@@ -20,10 +20,17 @@ Arguments:
 ###############################################################
 # --- Standard imports and dependencies ---
 ###############################################################
+import os
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
+
 import argparse
 from apexpy import Apex
 import datetime as dt
 import time
+import matplotlib
+
+matplotlib.use("Agg")
+
 from core.masks import build_overlap_masks
 from core.fetch_url import closest_amisr_png_url
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED, REFERENCE_NORMALIZATION_TIME
@@ -55,9 +62,9 @@ def main():
     # --- Parse command-line arguments ---
     ap = argparse.ArgumentParser()
     ap.add_argument("--pretty", action='store_true')  # Use pretty Cartopy plotting
-    ap.add_argument("--date", required=False, type=str, default="20260210", help="Date for the ASI images (format: YYYYMMDD)")
+    ap.add_argument("--date", required=False, type=str, default=None, help="Date for the ASI images (format: YYYYMMDD)")
     ap.add_argument("--time", required=True, type=str, default=dt.datetime.now(dt.UTC).strftime("%H%M%S"), help="Time for the ASI images (format: HHMMSS or HHMMSS.s)")
-    ap.add_argument("--sites", nargs='*', default=['ARV', 'VEE', 'BVR'], help="List of sites to process (default: all sites)")
+    ap.add_argument("--sites", nargs='*', default=None, help="List of sites to process (default: mission-specific sites)")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default="GNEISS", help="Mission dataset to use for trajectories and mission-specific site assets")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel for TIFF lookup and frame timing")
     ap.add_argument(
@@ -74,13 +81,26 @@ def main():
         "--no-shared-norm",
         dest="shared_norm",
         action="store_false",
-        default=True,
+        default=None,
         help="Disable cross-site shared brightness normalization and normalize each output frame independently",
+    )
+    ap.add_argument(
+        "--shared-norm",
+        dest="shared_norm",
+        action="store_true",
+        help="Enable cross-site shared brightness normalization",
     )
     ap.add_argument("--plot-receivers", action="store_true", help="Plot receiver locations from receivers.csv on the map")
     ap.add_argument("--plot-ipps", action="store_true", help="Plot receiver ionospheric pierce points on the map")
     ap.add_argument("--plot-geodetic-traj", dest="plot_geodetic_traj", action="store_true", help="Overlay the rocket trajectories in geodetic coordinates as blue traces")
     args = ap.parse_args()
+    args.mission = args.mission.upper()
+    if args.date is None:
+        args.date = "20250202" if args.mission == "GIRAFF" else "20260210"
+    if args.sites is None:
+        args.sites = ["VEE"] if args.mission == "GIRAFF" else ["ARV", "VEE", "BVR"]
+    if args.shared_norm is None:
+        args.shared_norm = args.mission != "GIRAFF"
     try:
         parse_hhmmss_fractional(args.time)
     except ValueError as exc:
@@ -89,8 +109,6 @@ def main():
         lon_min, lon_max, lat_min, lat_max = args.bounds
         if lon_min >= lon_max or lat_min >= lat_max:
             ap.error("--bounds must satisfy LON_MIN < LON_MAX and LAT_MIN < LAT_MAX")
-    args.mission = args.mission.upper()
-
     # --- Load geographic mapping for each ASI site ---
     selected_sites = set([s.upper() for s in args.sites])
     if args.mission == "GIRAFF":
@@ -128,11 +146,12 @@ def main():
     # --- Process TIFF-backed sites: search multiple tiles and select closest frame ---
     fixed_norm_limits = None
     if args.shared_norm:
+        reference_norm_time = time_str if args.mission == "GIRAFF" else REFERENCE_NORMALIZATION_TIME
         fixed_norm_limits = compute_reference_norm_limits(
             skymaps,
             selected_sites,
             date,
-            REFERENCE_NORMALIZATION_TIME,
+            reference_norm_time,
             args.color,
             frame_interval,
             colorbar_scale=args.colorbar_scale,
