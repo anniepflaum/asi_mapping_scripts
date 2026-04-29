@@ -19,6 +19,20 @@ GIRAFF_LOG_PATH = Path("/Volumes/LynchK/GIRAFF/GIRAFF/SOK_250202_5577/ut06/SOK25
 GIRAFF_CACHE_DIR = WORKSPACE_DIR / "raw_tiffs" / "green" / "VEE" / "GIRAFF"
 GIRAFF_CACHE_NPY_PATH = GIRAFF_CACHE_DIR / "SOK250202_launch_070618_071637_uint16.npy"
 GIRAFF_CACHE_METADATA_PATH = GIRAFF_CACHE_DIR / "SOK250202_launch_070618_071637_metadata.json"
+GIRAFF_TIFF_PATHS_BY_DATE = {
+    "20250202": GIRAFF_TIFF_PATH,
+    "20250209": Path("/Volumes/LynchK/GIRAFF/GIRAFF/SOK_250209_5577/ut07/SOK250209_07495931_16bit.tif"),
+}
+GIRAFF_LOG_PATHS_BY_DATE = {
+    date: path.with_suffix(".log") for date, path in GIRAFF_TIFF_PATHS_BY_DATE.items()
+}
+GIRAFF_CACHE_PATHS_BY_DATE = {
+    "20250202": (GIRAFF_CACHE_NPY_PATH, GIRAFF_CACHE_METADATA_PATH),
+    "20250209": (
+        GIRAFF_CACHE_DIR / "SOK250209_083140_084415_uint16.npy",
+        GIRAFF_CACHE_DIR / "SOK250209_083140_084415_metadata.json",
+    ),
+}
 
 
 def parse_tiff_start_datetime(tiff_path):
@@ -73,20 +87,29 @@ def _parse_iso_datetime(value):
     return dt.datetime.fromisoformat(value) if value else None
 
 
-def get_giraff_cache_metadata():
+def get_giraff_cache_paths(date_str=None):
+    date_key = str(date_str) if date_str is not None else None
+    return GIRAFF_CACHE_PATHS_BY_DATE.get(date_key, (GIRAFF_CACHE_NPY_PATH, GIRAFF_CACHE_METADATA_PATH))
+
+
+def get_giraff_cache_metadata(date_str=None, cache_path=None, metadata_path=None):
     """Return local GIRAFF launch-window cache metadata if available."""
-    if not GIRAFF_CACHE_NPY_PATH.exists() or not GIRAFF_CACHE_METADATA_PATH.exists():
+    if cache_path is None or metadata_path is None:
+        cache_path, metadata_path = get_giraff_cache_paths(date_str)
+    if not cache_path.exists() or not metadata_path.exists():
         return None
-    with open(GIRAFF_CACHE_METADATA_PATH, "r", encoding="utf-8") as fh:
+    with open(metadata_path, "r", encoding="utf-8") as fh:
         meta = json.load(fh)
     meta["cache_start_dt"] = _parse_iso_datetime(meta.get("cache_start_time"))
     meta["cache_end_dt"] = _parse_iso_datetime(meta.get("cache_end_time"))
+    meta["cache_path"] = str(cache_path)
+    meta["metadata_path"] = str(metadata_path)
     return meta
 
 
-def load_giraff_cache_frame(target_dt, verbose=True):
+def load_giraff_cache_frame(target_dt, verbose=True, cache_path=None, metadata_path=None):
     """Load the closest GIRAFF frame from the local disk-backed launch cache."""
-    meta = get_giraff_cache_metadata()
+    meta = get_giraff_cache_metadata(cache_path=cache_path, metadata_path=metadata_path)
     if meta is None:
         return None
 
@@ -104,11 +127,12 @@ def load_giraff_cache_frame(target_dt, verbose=True):
     raw_idx = int(round((target_dt - start_dt).total_seconds() / frame_interval))
     idx = min(max(raw_idx, 0), n_frames - 1)
     frame_dt = start_dt + dt.timedelta(seconds=idx * frame_interval)
-    stack = np.load(GIRAFF_CACHE_NPY_PATH, mmap_mode="r")
+    cache_path = Path(meta["cache_path"])
+    stack = np.load(cache_path, mmap_mode="r")
     im = np.asarray(stack[idx], dtype=np.float32)
     if verbose:
         print(
-            f"VEE: {GIRAFF_CACHE_NPY_PATH.name} cached frame "
+            f"VEE: {cache_path.name} cached frame "
             f"{idx + 1}/{n_frames} (delta {abs((frame_dt - target_dt).total_seconds()):.2f}s)"
         )
     return im, im.copy().astype(np.float32)
@@ -116,15 +140,32 @@ def load_giraff_cache_frame(target_dt, verbose=True):
 
 def sidecar_log_path(tiff_path):
     """Return the sidecar .log path for a TIFF if it exists."""
-    if Path(tiff_path) == GIRAFF_TIFF_PATH:
-        return GIRAFF_LOG_PATH if GIRAFF_LOG_PATH.exists() else None
+    for date_key, path in GIRAFF_TIFF_PATHS_BY_DATE.items():
+        if Path(tiff_path) == path:
+            log_path = GIRAFF_LOG_PATHS_BY_DATE[date_key]
+            return log_path if log_path.exists() else None
     log_path = Path(tiff_path).with_suffix(".log")
     return log_path if log_path.exists() else None
 
 
 def tiff_timing_metadata(tiff_path, fallback_frame_interval):
     """Return start/end/count/cadence metadata for a TIFF."""
-    if Path(tiff_path) == GIRAFF_CACHE_NPY_PATH:
+    tiff_path = Path(tiff_path)
+    for _date_key, (cache_path, metadata_path) in GIRAFF_CACHE_PATHS_BY_DATE.items():
+        if tiff_path == cache_path:
+            cache_meta = get_giraff_cache_metadata(cache_path=cache_path, metadata_path=metadata_path)
+            if cache_meta is None:
+                raise FileNotFoundError(f"GIRAFF cache metadata not found: {metadata_path}")
+            return {
+                "path": str(cache_path),
+                "start_dt": cache_meta["cache_start_dt"],
+                "end_dt": cache_meta["cache_end_dt"],
+                "n_frames": int(cache_meta["cache_frame_count"]),
+                "frame_interval": float(cache_meta["frame_interval_seconds"]),
+                "source": str(metadata_path),
+                "cache_path": str(cache_path),
+            }
+    if tiff_path == GIRAFF_CACHE_NPY_PATH:
         cache_meta = get_giraff_cache_metadata()
         if cache_meta is None:
             raise FileNotFoundError(f"GIRAFF cache metadata not found: {GIRAFF_CACHE_METADATA_PATH}")
@@ -171,18 +212,23 @@ def tiff_timing_metadata(tiff_path, fallback_frame_interval):
 
 def get_giraff_tiff_candidates(date_str, override_dirs=None):
     """Discover GIRAFF SOK/VEE TIFFs for a YYYYMMDD date."""
-    if date_str != "20250202":
-        print(f"VEE: hard-coded GIRAFF TIFF is for 20250202, not {date_str}.")
+    date_key = str(date_str)
+    if date_key not in GIRAFF_TIFF_PATHS_BY_DATE:
+        supported = ", ".join(sorted(GIRAFF_TIFF_PATHS_BY_DATE))
+        print(f"VEE: supported GIRAFF dates are {supported}, not {date_str}.")
         return []
-    if get_giraff_cache_metadata() is not None:
-        return [str(GIRAFF_CACHE_NPY_PATH)]
-    if not GIRAFF_TIFF_PATH.exists():
-        print(f"VEE: hard-coded GIRAFF TIFF not found: {GIRAFF_TIFF_PATH}")
+    cache_path, metadata_path = get_giraff_cache_paths(date_key)
+    if get_giraff_cache_metadata(cache_path=cache_path, metadata_path=metadata_path) is not None:
+        return [str(cache_path)]
+    tiff_path = GIRAFF_TIFF_PATHS_BY_DATE[date_key]
+    log_path = GIRAFF_LOG_PATHS_BY_DATE[date_key]
+    if not tiff_path.exists():
+        print(f"VEE: hard-coded GIRAFF TIFF not found: {tiff_path}")
         return []
-    if not GIRAFF_LOG_PATH.exists():
-        print(f"VEE: hard-coded GIRAFF log not found: {GIRAFF_LOG_PATH}")
+    if not log_path.exists():
+        print(f"VEE: hard-coded GIRAFF log not found: {log_path}")
         return []
-    return [str(GIRAFF_TIFF_PATH)]
+    return [str(tiff_path)]
 
 
 def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission="GNEISS"):
@@ -229,13 +275,22 @@ def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval, colo
     Search candidate TIFF tiles and load the frame closest to target_dt.
     Returns (raw_image, normalized_image), both float32 arrays.
     """
-    uses_giraff_cache = site == "VEE" and any(Path(path) == GIRAFF_CACHE_NPY_PATH for path in tiff_paths)
-    if uses_giraff_cache or (site == "VEE" and any(Path(path) == GIRAFF_TIFF_PATH for path in tiff_paths)):
-        cached = load_giraff_cache_frame(target_dt, verbose=verbose)
+    cache_paths = {cache_path for cache_path, _metadata_path in GIRAFF_CACHE_PATHS_BY_DATE.values()}
+    tiff_lookup_paths = set(GIRAFF_TIFF_PATHS_BY_DATE.values())
+    selected_cache_path = next((Path(path) for path in tiff_paths if Path(path) in cache_paths), None)
+    uses_giraff_cache = site == "VEE" and selected_cache_path is not None
+    if uses_giraff_cache or (site == "VEE" and any(Path(path) in tiff_lookup_paths for path in tiff_paths)):
+        metadata_path = None
+        if selected_cache_path is not None:
+            for cache_path, candidate_metadata_path in GIRAFF_CACHE_PATHS_BY_DATE.values():
+                if selected_cache_path == cache_path:
+                    metadata_path = candidate_metadata_path
+                    break
+        cached = load_giraff_cache_frame(target_dt, verbose=verbose, cache_path=selected_cache_path, metadata_path=metadata_path)
         if cached is not None:
             return cached
         if uses_giraff_cache:
-            meta = get_giraff_cache_metadata()
+            meta = get_giraff_cache_metadata(cache_path=selected_cache_path, metadata_path=metadata_path)
             if meta is not None:
                 raise ValueError(
                     "Requested GIRAFF time is outside the local cache window "
@@ -336,6 +391,11 @@ def load_best_frame_from_cached_tiffs(site, tiff_metadata, target_dt, frame_inte
 
     in_range_candidates = [c for c in candidates if c["in_range"]]
     best = min(in_range_candidates or candidates, key=lambda c: c["delta_s"])
+
+    if Path(best["path"]).suffix.lower() == ".npy":
+        stack = np.load(best["path"], mmap_mode="r")
+        im = np.asarray(stack[best["idx"]], dtype=np.float32)
+        return im
 
     with tifffile.TiffFile(best["path"]) as tif:
         im = tif.pages[best["idx"]].asarray()

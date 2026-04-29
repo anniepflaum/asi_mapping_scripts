@@ -250,13 +250,15 @@ def load_tiff_frame_with_metadata(site, tiff_metadata, target_dt, frame_interval
     return im.astype("float32"), {"site": site, "frame_time": best["frame_dt"].isoformat()}
 
 
-def trajectory_configs(mission):
-    paths = mission_trajectory_paths(mission)
-    labels = trajectory_display_labels(mission)
-    configs = [("left", labels["left_tag"], labels["left"], paths["left"])]
-    if str(mission).upper() != "GIRAFF":
-        configs.append(("right", labels["right_tag"], labels["right"], paths["right"]))
-    return configs
+def trajectory_configs(mission, date=None):
+    paths = mission_trajectory_paths(mission, date=date)
+    labels = trajectory_display_labels(mission, date=date)
+    if str(mission).upper() == "GIRAFF":
+        return [("main", labels["main_tag"], labels["main"], paths["main"])]
+    return [
+        ("left", labels["left_tag"], labels["left"], paths["left"]),
+        ("right", labels["right_tag"], labels["right"], paths["right"]),
+    ]
 
 
 def get_site_change_times(rows, fieldname):
@@ -368,7 +370,7 @@ def main():
         if site in tiff_candidates:
             tiff_metadata[site] = build_tiff_metadata(tiff_candidates[site], frame_interval)
 
-    traj_configs = trajectory_configs(args.mission)
+    traj_configs = trajectory_configs(args.mission, date=args.date)
     traj_lookups = {
         key: build_traj_lookup(str(path), color=args.color)
         for key, _tag, _label, path in traj_configs
@@ -388,8 +390,6 @@ def main():
             csv_path,
             [
                 "time",
-                "left_frame_site",
-                "left_brightness",
                 *([field for key in traj_lookups for field in (f"{key}_frame_site", f"{key}_brightness")]),
             ],
         )
@@ -420,16 +420,21 @@ def main():
             [
                 f"{key}_frame_site",
                 f"{key}_frame_time",
+                f"{key}_rocket_lat",
+                f"{key}_rocket_lon",
+                f"{key}_rocket_alt_km",
                 f"{key}_percentile",
                 f"{key}_brightness",
             ]
         )
     receiver_fieldnames = ["time"]
-    for key, tag in traj_tags.items():
-        for receiver in receivers:
-            acronym = receiver["acronym"]
-            receiver_fieldnames.append(f"{tag}_{acronym}_ipp_brightness")
-            receiver_fieldnames.append(f"{tag}_{acronym}_ipp_site")
+    write_receiver_ipps = args.mission != "GIRAFF"
+    if write_receiver_ipps:
+        for key, tag in traj_tags.items():
+            for receiver in receivers:
+                acronym = receiver["acronym"]
+                receiver_fieldnames.append(f"{tag}_{acronym}_ipp_brightness")
+                receiver_fieldnames.append(f"{tag}_{acronym}_ipp_site")
 
     rows = []
     receiver_rows = []
@@ -477,10 +482,17 @@ def main():
             lat, lon = lookup_traj_position(traj_lookup, time_arg)
             geo = lookup_traj_geodetic_position(traj_lookup, time_arg)
             sample = best_rocket_brightness(lat, lon, skymaps, imgs_raw) if lat is not None and lon is not None else None
-            receiver_brightnesses, receiver_sites = sample_receiver_ipp_brightnesses(receivers, geo, skymaps, imgs_raw)
+            if write_receiver_ipps:
+                receiver_brightnesses, receiver_sites = sample_receiver_ipp_brightnesses(receivers, geo, skymaps, imgs_raw)
+            else:
+                receiver_brightnesses, receiver_sites = [], []
+            rocket_lat, rocket_lon, rocket_alt_km = geo
             plot_series[key].append(sample["raw_brightness"] if sample else None)
             row[f"{key}_frame_site"] = frame_info[sample["site"]]["site"] if sample and sample["site"] in frame_info else ""
             row[f"{key}_frame_time"] = frame_info[sample["site"]]["frame_time"] if sample and sample["site"] in frame_info else ""
+            row[f"{key}_rocket_lat"] = f"{rocket_lat:.6f}" if rocket_lat is not None else ""
+            row[f"{key}_rocket_lon"] = f"{rocket_lon:.6f}" if rocket_lon is not None else ""
+            row[f"{key}_rocket_alt_km"] = f"{rocket_alt_km:.6f}" if rocket_alt_km is not None else ""
             row[f"{key}_percentile"] = f"{sample['percentile']:.3f}" if sample else ""
             row[f"{key}_brightness"] = f"{sample['raw_brightness']:.3f}" if sample else ""
             for receiver, brightness, site_name in zip(receivers, receiver_brightnesses, receiver_sites):
@@ -497,14 +509,16 @@ def main():
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
-    receiver_out_path = make_receiver_output_path(out_path)
-    with receiver_out_path.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=receiver_fieldnames)
-        writer.writeheader()
-        writer.writerows(receiver_rows)
+    if write_receiver_ipps:
+        receiver_out_path = make_receiver_output_path(out_path)
+        with receiver_out_path.open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=receiver_fieldnames)
+            writer.writeheader()
+            writer.writerows(receiver_rows)
 
     print(f"Wrote {len(rows)} rows to {out_path}")
-    print(f"Wrote {len(receiver_rows)} rows to {receiver_out_path}")
+    if write_receiver_ipps:
+        print(f"Wrote {len(receiver_rows)} rows to {receiver_out_path}")
     if not args.no_plot:
         site_changes = {key: get_site_change_times(rows, f"{key}_frame_site") for key in traj_lookups}
         plot_output = make_plot_output_path(out_path, args.plot_output)

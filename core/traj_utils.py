@@ -12,7 +12,9 @@ import numpy as np
 from apexpy import Apex
 
 from core.paths import (
-    GIRAFF_LEFT_TRAJECTORY_PATH,
+    GIRAFF_380_TRAJECTORY_PATH,
+    GIRAFF_381_TRAJECTORY_PATH,
+    GIRAFF_TRAJECTORY_PATHS_BY_DATE,
     GNEISS_LEFT_TRAJECTORY_PATH,
     GNEISS_RIGHT_TRAJECTORY_PATH,
     MISSION_TRAJECTORY_PATHS,
@@ -34,7 +36,10 @@ XLSX_LON_COLUMN = "Long"
 XLSX_ALT_COLUMN = "Alt"
 XLSX_GPS_MSEC_COLUMN = "GPS Time (mSec of week)"
 XLSX_GPS_WEEK_COLUMN = "GPS Week"
-GIRAFF_LAUNCH_DATETIME = dt.datetime(2025, 2, 2)
+GIRAFF_LAUNCH_DATETIMES_BY_TRAJECTORY = {
+    GIRAFF_381_TRAJECTORY_PATH.name: dt.datetime(2025, 2, 2),
+    GIRAFF_380_TRAJECTORY_PATH.name: dt.datetime(2025, 2, 9),
+}
 
 
 def mapped_apex_height(color="green"):
@@ -68,17 +73,28 @@ def format_seconds_of_day(seconds):
     return f"{base}.{frac_str}" if frac_str else base
 
 
-def mission_trajectory_paths(mission):
+def normalize_date_key(date=None):
+    if date is None:
+        return None
+    return str(date).replace("-", "")
+
+
+def mission_trajectory_paths(mission, date=None):
     mission_key = str(mission).upper()
+    date_key = normalize_date_key(date)
+    if mission_key == "GIRAFF" and date_key in GIRAFF_TRAJECTORY_PATHS_BY_DATE:
+        return GIRAFF_TRAJECTORY_PATHS_BY_DATE[date_key]
     if mission_key not in MISSION_TRAJECTORY_PATHS:
         raise ValueError(f"Unsupported mission: {mission}")
     return MISSION_TRAJECTORY_PATHS[mission_key]
 
 
-def trajectory_display_labels(mission):
+def trajectory_display_labels(mission, date=None):
     mission_key = str(mission).upper()
     if mission_key == "GIRAFF":
-        return {"left": "36381 Main", "left_tag": "Main"}
+        date_key = normalize_date_key(date)
+        rocket = "36380" if date_key == "20250209" else "36381"
+        return {"main": f"{rocket} Main", "main_tag": rocket}
     return {"left": "36.397", "right": "36.398", "left_tag": "397", "right_tag": "398"}
 
 
@@ -151,12 +167,13 @@ def gps_msec_of_week_to_seconds_of_day(value):
     return float(seconds_of_week % 86400.0)
 
 
-def parse_giraff_sample_datetime(gps_msec_value):
-    """
-    Hardwire GIRAFF workbook samples to the Feb. 2, 2025 UTC launch date.
-    The workbook's GPS week values are not used for calendar reconstruction.
-    """
-    return GIRAFF_LAUNCH_DATETIME + dt.timedelta(seconds=gps_msec_of_week_to_seconds_of_day(gps_msec_value))
+def giraff_launch_datetime_for_trajectory(filename):
+    path_name = Path(filename).name
+    return GIRAFF_LAUNCH_DATETIMES_BY_TRAJECTORY.get(path_name, dt.datetime(2025, 2, 2))
+
+
+def parse_giraff_sample_datetime(gps_msec_value, launch_datetime):
+    return launch_datetime + dt.timedelta(seconds=gps_msec_of_week_to_seconds_of_day(gps_msec_value))
 
 
 def load_traj_records_xlsx(filename):
@@ -188,12 +205,13 @@ def load_traj_records_xlsx(filename):
     if not samples:
         raise ValueError(f"No trajectory samples found in {filename}")
 
+    launch_datetime = giraff_launch_datetime_for_trajectory(filename)
     sample_datetimes = np.array(
-        [parse_giraff_sample_datetime(row[index_by_name[XLSX_GPS_MSEC_COLUMN]]) for row in samples],
+        [parse_giraff_sample_datetime(row[index_by_name[XLSX_GPS_MSEC_COLUMN]], launch_datetime) for row in samples],
         dtype=object,
     )
     utc_times = np.array(
-        [(sample_dt - GIRAFF_LAUNCH_DATETIME).total_seconds() for sample_dt in sample_datetimes],
+        [(sample_dt - launch_datetime).total_seconds() for sample_dt in sample_datetimes],
         dtype=float,
     )
     flight_times = np.array([float(row[index_by_name[XLSX_FLIGHT_TIME_COLUMN]]) for row in samples], dtype=float)
@@ -213,6 +231,8 @@ def get_launch_start_from_traj_csv(filename):
     """Estimate T0 launch time from GPS UTC and official flight-time columns."""
     utc_times, flight_times, _lats, _lons, _alts = load_traj_records(filename)
     launch_seconds = np.nanmedian(utc_times - flight_times)
+    if not np.isfinite(launch_seconds) or launch_seconds < 0.0 or launch_seconds >= 86400.0:
+        return None
     return format_seconds_of_day(float(launch_seconds))
 
 
@@ -250,7 +270,7 @@ def trajectory_marker_second(filename):
         return 0.0
     if path_name == GNEISS_RIGHT_TRAJECTORY_PATH.name or "36398" in path_name:
         return 30.0
-    if path_name == GIRAFF_LEFT_TRAJECTORY_PATH.name or "MAIN_PAYLOAD" in path_name:
+    if "MAIN_PAYLOAD" in path_name:
         return None
     return 30.0
 

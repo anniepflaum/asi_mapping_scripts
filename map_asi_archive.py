@@ -196,6 +196,7 @@ def main():
         pfisr,
         output_path=output_path,
         map_time=args.time,
+        map_date=args.date,
         bounds=args.bounds,
         color=args.color,
         imgs_raw=imgs_raw,
