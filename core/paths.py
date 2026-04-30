@@ -10,6 +10,7 @@ GIRAFF_TRAJECTORIES_DIR = WORKSPACE_DIR / "trajectories" / "GIRAFF"
 MAPPED_DIR = WORKSPACE_DIR / "mapped"
 COAST_DIR = PROJECT_DIR / "coast"
 RECEIVERS_PATH = WORKSPACE_DIR / "receivers.csv"
+GIRAFF_RECEIVER_ACRONYMS = ("VEE", "TOO", "PKR")
 
 GNEISS_LEFT_TRAJECTORY_PATH = GNEISS_TRAJECTORIES_DIR / "36397_GPS_Time_Export_01.csv"
 GNEISS_RIGHT_TRAJECTORY_PATH = GNEISS_TRAJECTORIES_DIR / "36398_GPS_Time_Export_00.csv"
@@ -58,3 +59,17 @@ def mission_output_dir(mission, color="green", date=None):
     if mission_key == "GIRAFF":
         return base / "GIRAFF" / giraff_rocket_id_for_date(date)
     return base / mission_key
+
+
+def mission_receiver_acronyms(mission):
+    if str(mission).upper() == "GIRAFF":
+        return GIRAFF_RECEIVER_ACRONYMS
+    return None
+
+
+def filter_receivers_for_mission(receivers, mission):
+    acronyms = mission_receiver_acronyms(mission)
+    if acronyms is None:
+        return receivers
+    receiver_map = {receiver.get("acronym", "").upper(): receiver for receiver in receivers}
+    return [receiver_map[acronym] for acronym in acronyms if acronym in receiver_map]

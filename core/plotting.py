@@ -12,7 +12,7 @@ import numpy as np
 import magcoordmap as mcm
 from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
-from core.paths import COAST_LAT_PATH, COAST_LON_PATH, RECEIVERS_PATH, mission_output_dir
+from core.paths import COAST_LAT_PATH, COAST_LON_PATH, RECEIVERS_PATH, filter_receivers_for_mission, mission_output_dir
 from core.plot_norm import choose_image_cmap, compute_linear_image_limits, compute_log_image_limits
 from core.time_utils import format_time_label, hhmmss_fractional_to_seconds, sanitize_time_for_filename
 from core.traj_utils import (
@@ -413,7 +413,7 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
 
 
 def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS"):
-    receivers = load_receivers() if (plot_receivers or plot_ipps) else []
+    receivers = filter_receivers_for_mission(load_receivers(), mission) if (plot_receivers or plot_ipps) else []
     if pretty:
         fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex)
     else:

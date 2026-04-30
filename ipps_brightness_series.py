@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Build an IPP-brightness-vs-time dataset for both GNEISS trajectories.
+Build an IPP-brightness-vs-time dataset for mission trajectories.
 
 For each time step in a requested range, this script:
 1) Loads the closest ASI frame per selected site.
-2) Finds each rocket geodetic position (left/right trajectory) at that time.
+2) Finds each rocket geodetic position at that time.
 3) Computes the ionospheric pierce point for each receiver and rocket.
 4) Samples ASI brightness at each IPP using the same nearest-valid-pixels logic
    used by map_asi_archive.py.
@@ -29,9 +29,9 @@ from core.masks import build_overlap_masks
 from core.remote_data import retrieve_image
 from core.skymaps import load_skymaps
 from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
-from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH, mission_output_dir
+from core.paths import filter_receivers_for_mission, mission_output_dir
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
-from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, mapped_apex_height
+from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, mapped_apex_height, mission_trajectory_paths, trajectory_display_labels
 from traj_brightness_series import count_steps, format_time_arg, load_receivers, load_tiff_frame_with_metadata, print_progress
 
 
@@ -43,13 +43,17 @@ def receiver_suffix(receivers, all_receivers):
     return "_receivers_" + "_".join(selected)
 
 
-def make_output_path(out_arg, start, end, step, receivers, all_receivers):
+def series_prefix(mission):
+    return "ipps_brightness_series" if str(mission).upper() == "GNEISS" else f"{str(mission).upper()}_ipps_brightness_series"
+
+
+def make_output_path(out_arg, mission, date, start, end, step, receivers, all_receivers):
     if out_arg:
         return Path(out_arg)
     start_tok = sanitize_time_for_filename(start)
     end_tok = sanitize_time_for_filename(end)
     step_tok = str(step).replace(".", "p")
-    return Path(f"ipps_brightness_series_{start_tok}_{end_tok}_step{step_tok}{receiver_suffix(receivers, all_receivers)}.csv")
+    return Path(f"{series_prefix(mission)}_{date}_{start_tok}_{end_tok}_step{step_tok}{receiver_suffix(receivers, all_receivers)}.csv")
 
 
 def make_plot_output_path(csv_path, output_arg):
@@ -59,12 +63,13 @@ def make_plot_output_path(csv_path, output_arg):
 
 
 def parse_series_filename(csv_path, prefix):
-    pattern = rf"^{re.escape(prefix)}_(\d{{6}}(?:p\d+)?)_(\d{{6}}(?:p\d+)?)_step(\d+(?:p\d+)?)(?:_receivers_.+)?\.csv$"
+    pattern = rf"^{re.escape(prefix)}_(?:(\d{{8}})_)?(\d{{6}}(?:p\d+)?)_(\d{{6}}(?:p\d+)?)_step(\d+(?:p\d+)?)(?:_receivers_.+)?\.csv$"
     match = re.match(pattern, csv_path.name)
     if not match:
         return None
-    start_tok, end_tok, step_tok = match.groups()
+    date_tok, start_tok, end_tok, step_tok = match.groups()
     return {
+        "date": date_tok,
         "start_tok": start_tok,
         "end_tok": end_tok,
         "start_time": start_tok.replace("p", "."),
@@ -110,6 +115,8 @@ def find_reusable_csv(preferred_path, prefix, date, start, end, step, required_f
     for candidate in preferred_path.parent.glob(f"{prefix}_*.csv"):
         parsed = parse_series_filename(candidate, prefix)
         if parsed is None:
+            continue
+        if parsed.get("date") is not None and parsed["date"] != date:
             continue
         try:
             candidate_start_dt = parse_date_and_time(date, parsed["start_time"])
@@ -198,9 +205,20 @@ def compute_receiver_ipp_samples(receivers, rocket_geo, skymaps, imgs_raw, ipp_h
     return samples
 
 
-def build_fieldnames(receivers):
+def trajectory_configs(mission, date=None):
+    paths = mission_trajectory_paths(mission, date=date)
+    labels = trajectory_display_labels(mission, date=date)
+    if str(mission).upper() == "GIRAFF":
+        return [("main", labels["main_tag"], labels["main"], paths["main"])]
+    return [
+        ("left", labels["left_tag"], labels["left"], paths["left"]),
+        ("right", labels["right_tag"], labels["right"], paths["right"]),
+    ]
+
+
+def build_fieldnames(receivers, rocket_labels):
     fieldnames = ["time"]
-    for rocket_label in ["397", "398"]:
+    for rocket_label in rocket_labels:
         for receiver in receivers:
             acronym = receiver["acronym"]
             fieldnames.extend(
@@ -215,12 +233,14 @@ def build_fieldnames(receivers):
     return fieldnames
 
 
-def plot_ipps_timeseries(times, rows, receivers, output_path, title):
+def plot_ipps_timeseries(times, rows, receivers, rocket_labels, output_path, title):
     if not times:
         raise ValueError("No rows with iso_time were collected")
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 16), sharex=True)
-    rocket_configs = [("397", axes[0]), ("398", axes[1])]
+    fig, axes = plt.subplots(len(rocket_labels), 1, figsize=(12, 8 * len(rocket_labels)), sharex=True)
+    if len(rocket_labels) == 1:
+        axes = [axes]
+    rocket_configs = list(zip(rocket_labels, axes))
     cmap = plt.get_cmap("tab10")
     all_brightnesses = []
 
@@ -247,9 +267,9 @@ def plot_ipps_timeseries(times, rows, receivers, output_path, title):
     handles, labels = axes[0].get_legend_handles_labels()
     axes[0].legend(handles, labels, ncols=min(4, len(receivers)), fontsize=8, loc="upper left")
     axes[0].set_title(title)
-    axes[1].set_xlabel("Time")
-    axes[1].xaxis.set_major_locator(mdates.MinuteLocator(interval=1))
-    axes[1].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    axes[-1].set_xlabel("Time")
+    axes[-1].xaxis.set_major_locator(mdates.MinuteLocator(interval=1))
+    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     fig.autofmt_xdate()
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -260,11 +280,12 @@ def plot_ipps_timeseries(times, rows, receivers, output_path, title):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", default="20260210", help="Date YYYYMMDD")
+    ap.add_argument("--date", default=None, help="Date YYYYMMDD")
     ap.add_argument("--start", required=True, help="Start time HHMMSS(.fraction)")
     ap.add_argument("--end", required=True, help="End time HHMMSS(.fraction)")
     ap.add_argument("--step", type=float, default=0.05, help="Step size in seconds")
-    ap.add_argument("--sites", nargs="*", default=["ARV", "BVR", "VEE", "PKR"], help="Sites to include")
+    ap.add_argument("--sites", nargs="*", default=None, help="Sites to include")
+    ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default="GNEISS", help="Mission dataset to use")
     ap.add_argument("--receivers", nargs="*", default=None, help="Receiver acronyms to include in the CSV and plot")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--output", default=None, help="Output CSV path")
@@ -274,6 +295,17 @@ def main():
     ap.add_argument("--no-csv", dest="no_csv", action="store_true", default=True, help="Skip CSV generation and plot from an existing CSV instead (default)")
     ap.add_argument("--csv", dest="no_csv", action="store_false", help="Generate a CSV instead of reusing an existing one")
     args = ap.parse_args()
+    args.mission = args.mission.upper()
+    if args.date is None:
+        args.date = "20250202" if args.mission == "GIRAFF" else "20260210"
+    if args.sites is None:
+        args.sites = ["VEE"] if args.mission == "GIRAFF" else ["ARV", "BVR", "VEE", "PKR"]
+    if args.mission == "GIRAFF":
+        if args.color != "green":
+            ap.error("--mission GIRAFF only supports --color green")
+        invalid_sites = sorted({site.upper() for site in args.sites} - {"VEE"})
+        if invalid_sites:
+            ap.error(f"--mission GIRAFF only supports VEE; remove site(s): {', '.join(invalid_sites)}")
 
     try:
         parse_hhmmss_fractional(args.start)
@@ -291,17 +323,18 @@ def main():
     selected_sites = set(s.upper() for s in args.sites)
     all_receivers = load_receivers()
     try:
-        receivers = filter_receivers(all_receivers, args.receivers)
+        mission_receivers = filter_receivers_for_mission(all_receivers, args.mission)
+        receivers = filter_receivers(mission_receivers, args.receivers)
     except ValueError as exc:
         ap.error(str(exc))
-    skymaps = load_skymaps(selected_sites, color=args.color)
+    skymaps = load_skymaps(selected_sites, color=args.color, mission=args.mission)
     build_overlap_masks(skymaps)
 
     tiff_candidates = {}
     tiff_metadata = {}
     for site in ["ARV", "VEE", "BVR"]:
         if site in selected_sites:
-            tiff_candidates[site] = get_site_tiff_candidates(site, args.date, args.color)
+            tiff_candidates[site] = get_site_tiff_candidates(site, args.date, args.color, mission=args.mission)
 
     frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
     for site in ["ARV", "VEE", "BVR"]:
@@ -309,26 +342,30 @@ def main():
             tiff_metadata[site] = build_tiff_metadata(tiff_candidates[site], frame_interval)
 
     ipp_height_km = mapped_apex_height(args.color)
-    left_traj = build_traj_lookup(str(GNEISS_LEFT_TRAJECTORY_PATH), color=args.color)
-    right_traj = build_traj_lookup(str(GNEISS_RIGHT_TRAJECTORY_PATH), color=args.color)
+    traj_configs = trajectory_configs(args.mission, date=args.date)
+    traj_lookups = {
+        key: build_traj_lookup(str(path), color=args.color)
+        for key, _tag, _label, path in traj_configs
+    }
+    rocket_labels = [tag for _key, tag, _label, _path in traj_configs]
 
-    out_path = make_output_path(args.output, args.start, args.end, args.step, receivers, all_receivers)
+    out_path = make_output_path(args.output, args.mission, args.date, args.start, args.end, args.step, receivers, mission_receivers)
     if not out_path.is_absolute():
-        out_path = mission_output_dir("GNEISS", color=args.color, date=args.date) / out_path
+        out_path = mission_output_dir(args.mission, color=args.color, date=args.date) / out_path
 
-    fieldnames = build_fieldnames(receivers)
+    fieldnames = build_fieldnames(receivers, rocket_labels)
 
     if args.no_csv:
         if args.no_plot:
             ap.error("--no-csv cannot be combined with --no-plot")
-        csv_path = find_reusable_csv(out_path, "ipps_brightness_series", args.date, args.start, args.end, args.step, ["time", *fieldnames[1:]])
+        csv_path = find_reusable_csv(out_path, series_prefix(args.mission), args.date, args.start, args.end, args.step, ["time", *fieldnames[1:]])
         rows = load_rows_from_csv(csv_path, ["time", *fieldnames[1:]])
         requested_times = set(build_requested_iso_times(args.date, args.start, args.end, args.step))
         rows = [row for row in rows if row.get("time") in requested_times]
         plot_times = [dt.datetime.fromisoformat(row["time"]) for row in rows if row.get("time")]
         plot_output = make_plot_output_path(out_path, args.plot_output)
         plot_title = args.plot_title or f"IPP Brightness vs Time ({args.color})"
-        plot_ipps_timeseries(plot_times, rows, receivers, plot_output, plot_title)
+        plot_ipps_timeseries(plot_times, rows, receivers, rocket_labels, plot_output, plot_title)
         print(f"Plotted from existing CSV {csv_path}")
         return
 
@@ -342,8 +379,10 @@ def main():
         step_idx += 1
         time_arg = format_time_arg(t)
         print_progress(step_idx, total_steps, time_arg)
-        left_geo = lookup_traj_geodetic_position(left_traj, time_arg)
-        right_geo = lookup_traj_geodetic_position(right_traj, time_arg)
+        rocket_geos = {
+            tag: lookup_traj_geodetic_position(traj_lookups[key], time_arg)
+            for key, tag, _label, _path in traj_configs
+        }
 
         imgs_raw = {}
 
@@ -369,11 +408,13 @@ def main():
             except Exception as exc:
                 print(f"{time_arg} PKR: frame load failed: {exc}")
 
-        left_samples = compute_receiver_ipp_samples(receivers, left_geo, skymaps, imgs_raw, ipp_height_km)
-        right_samples = compute_receiver_ipp_samples(receivers, right_geo, skymaps, imgs_raw, ipp_height_km)
+        rocket_samples = {
+            rocket_label: compute_receiver_ipp_samples(receivers, geo, skymaps, imgs_raw, ipp_height_km)
+            for rocket_label, geo in rocket_geos.items()
+        }
 
         row = {"time": t.isoformat()}
-        for rocket_label, samples in (("397", left_samples), ("398", right_samples)):
+        for rocket_label, samples in rocket_samples.items():
             for sample in samples:
                 acronym = sample["acronym"]
                 row[f"{rocket_label}_{acronym}_ipp_lat"] = f"{sample['ipp_lat']:.6f}" if sample["ipp_lat"] is not None else ""
@@ -395,7 +436,7 @@ def main():
     if not args.no_plot:
         plot_output = make_plot_output_path(out_path, args.plot_output)
         plot_title = args.plot_title or f"IPP Brightness vs Time ({args.color})"
-        plot_ipps_timeseries(plot_times, rows, receivers, plot_output, plot_title)
+        plot_ipps_timeseries(plot_times, rows, receivers, rocket_labels, plot_output, plot_title)
 
 
 if __name__ == "__main__":

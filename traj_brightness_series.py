@@ -28,7 +28,6 @@ import numpy as np
 import tifffile
 
 from core.brightness import best_rocket_brightness
-from core.calc_ipp import calc_ipp
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
 from core.plot_norm import compute_reference_norm_limits, reference_normalization_time
@@ -90,10 +89,6 @@ def make_plot_output_path(csv_path, output_arg):
     if output_arg:
         return Path(output_arg)
     return Path(csv_path).with_suffix(".png")
-
-
-def make_receiver_output_path(csv_path):
-    return csv_path.with_name(f"{csv_path.stem}_receiver_ipps.csv")
 
 
 def parse_series_filename(csv_path, prefix):
@@ -301,27 +296,6 @@ def load_receivers(path=RECEIVERS_PATH):
         ]
 
 
-def sample_receiver_ipp_brightnesses(receivers, rocket_geo, skymaps, imgs_raw, ipp_height_km=110.0):
-    brightnesses = []
-    sites = []
-    if rocket_geo[0] is None or rocket_geo[1] is None or rocket_geo[2] is None:
-        return [None] * len(receivers), [""] * len(receivers)
-
-    rocket_lat, rocket_lon, rocket_alt_km = rocket_geo
-    rocket_position = [rocket_lat, rocket_lon, rocket_alt_km * 1000.0]
-    for receiver in receivers:
-        ipp_lat, ipp_lon = calc_ipp(
-            [receiver["lat"], receiver["lon"], receiver["alt_m"]],
-            rocket_position,
-            rockcoords="geo",
-            height=ipp_height_km,
-        )
-        sample = best_rocket_brightness(ipp_lat, ipp_lon, skymaps, imgs_raw)
-        brightnesses.append(sample["raw_brightness"] if sample else None)
-        sites.append(sample["site"] if sample else "")
-    return brightnesses, sites
-
-
 def normalize_reference_brightness(raw_brightness, norm_limits):
     if raw_brightness is None or norm_limits is None:
         return None
@@ -371,7 +345,6 @@ def main():
         ap.error("--end must be >= --start")
 
     selected_sites = set(s.upper() for s in args.sites)
-    receivers = load_receivers()
     skymaps = load_skymaps(selected_sites, color=args.color, mission=args.mission)
 
     build_overlap_masks(skymaps)
@@ -451,17 +424,7 @@ def main():
         )
         if args.mission == "GIRAFF":
             fieldnames.append(f"{key}_reference_norm_brightness")
-    receiver_fieldnames = ["time"]
-    write_receiver_ipps = args.mission != "GIRAFF"
-    if write_receiver_ipps:
-        for key, tag in traj_tags.items():
-            for receiver in receivers:
-                acronym = receiver["acronym"]
-                receiver_fieldnames.append(f"{tag}_{acronym}_ipp_brightness")
-                receiver_fieldnames.append(f"{tag}_{acronym}_ipp_site")
-
     rows = []
-    receiver_rows = []
     plot_times = []
     plot_series = {key: [] for key in traj_lookups}
     reference_norm_limits = None
@@ -515,15 +478,10 @@ def main():
 
         plot_times.append(t)
         row = {"time": t.isoformat()}
-        receiver_row = {"time": t.isoformat()}
         for key, traj_lookup in traj_lookups.items():
             lat, lon = lookup_traj_position(traj_lookup, time_arg)
             geo = lookup_traj_geodetic_position(traj_lookup, time_arg)
             sample = best_rocket_brightness(lat, lon, skymaps, imgs_raw) if lat is not None and lon is not None else None
-            if write_receiver_ipps:
-                receiver_brightnesses, receiver_sites = sample_receiver_ipp_brightnesses(receivers, geo, skymaps, imgs_raw)
-            else:
-                receiver_brightnesses, receiver_sites = [], []
             rocket_lat, rocket_lon, rocket_alt_km = geo
             reference_norm_brightness = (
                 normalize_reference_brightness(sample["raw_brightness"], reference_norm_limits)
@@ -540,13 +498,7 @@ def main():
             row[f"{key}_brightness"] = f"{sample['raw_brightness']:.3f}" if sample else ""
             if args.mission == "GIRAFF":
                 row[f"{key}_reference_norm_brightness"] = f"{reference_norm_brightness:.6f}" if reference_norm_brightness is not None else ""
-            for receiver, brightness, site_name in zip(receivers, receiver_brightnesses, receiver_sites):
-                acronym = receiver["acronym"]
-                tag = traj_tags[key]
-                receiver_row[f"{tag}_{acronym}_ipp_brightness"] = f"{brightness:.3f}" if brightness is not None else ""
-                receiver_row[f"{tag}_{acronym}_ipp_site"] = site_name
         rows.append(row)
-        receiver_rows.append(receiver_row)
         t += step_td
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -554,16 +506,8 @@ def main():
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
-    if write_receiver_ipps:
-        receiver_out_path = make_receiver_output_path(out_path)
-        with receiver_out_path.open("w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=receiver_fieldnames)
-            writer.writeheader()
-            writer.writerows(receiver_rows)
 
     print(f"Wrote {len(rows)} rows to {out_path}")
-    if write_receiver_ipps:
-        print(f"Wrote {len(receiver_rows)} rows to {receiver_out_path}")
     if not args.no_plot:
         site_changes = {key: get_site_change_times(rows, f"{key}_frame_site") for key in traj_lookups}
         plot_output = make_plot_output_path(out_path, args.plot_output)
