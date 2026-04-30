@@ -39,14 +39,12 @@ from core.time_utils import (
     sanitize_time_for_filename,
 )
 from core.fetch_url import closest_amisr_png_url
-from core.paths import RECEIVERS_PATH, mission_output_dir
+from core.missions import default_date, default_sites, mission_output_dir, trajectory_config_tuples, validate_color_and_sites
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import (
     build_traj_lookup,
     lookup_traj_geodetic_position,
     lookup_traj_position,
-    mission_trajectory_paths,
-    trajectory_display_labels,
 )
 
 
@@ -249,17 +247,6 @@ def load_tiff_frame_with_metadata(site, tiff_metadata, target_dt, frame_interval
     return im.astype("float32"), {"site": site, "frame_time": best["frame_dt"].isoformat()}
 
 
-def trajectory_configs(mission, date=None):
-    paths = mission_trajectory_paths(mission, date=date)
-    labels = trajectory_display_labels(mission, date=date)
-    if str(mission).upper() == "GIRAFF":
-        return [("main", labels["main_tag"], labels["main"], paths["main"])]
-    return [
-        ("left", labels["left_tag"], labels["left"], paths["left"]),
-        ("right", labels["right_tag"], labels["right"], paths["right"]),
-    ]
-
-
 def get_site_change_times(rows, fieldname):
     non_empty_sites = {row.get(fieldname) for row in rows if row.get(fieldname)}
     if len(non_empty_sites) <= 1:
@@ -278,22 +265,6 @@ def get_site_change_times(rows, fieldname):
             change_times.append(dt.datetime.fromisoformat(row["time"]))
         previous_value = current_value
     return change_times
-
-
-def load_receivers(path=RECEIVERS_PATH):
-    with open(path, "r", encoding="utf-8", newline="") as fd:
-        reader = csv.DictReader(fd)
-        return [
-            {
-                "name": row["Name"].strip(),
-                "acronym": row["acronym"].strip(),
-                "lat": float(row["Lat"]),
-                "lon": float(row["Lon"]),
-                "alt_m": 0.0,
-            }
-            for row in reader
-            if row.get("Lat") and row.get("Lon")
-        ]
 
 
 def normalize_reference_brightness(raw_brightness, norm_limits):
@@ -321,15 +292,10 @@ def main():
     args = ap.parse_args()
     args.mission = args.mission.upper()
     if args.date is None:
-        args.date = "20250202" if args.mission == "GIRAFF" else "20260210"
+        args.date = default_date(args.mission)
     if args.sites is None:
-        args.sites = ["VEE"] if args.mission == "GIRAFF" else ["ARV", "BVR", "VEE", "PKR"]
-    if args.mission == "GIRAFF":
-        if args.color != "green":
-            ap.error("--mission GIRAFF only supports --color green")
-        invalid_sites = sorted({site.upper() for site in args.sites} - {"VEE"})
-        if invalid_sites:
-            ap.error(f"--mission GIRAFF only supports VEE; remove site(s): {', '.join(invalid_sites)}")
+        args.sites = default_sites(args.mission, include_pkr=True)
+    validate_color_and_sites(ap, args.mission, args.color, args.sites)
 
     try:
         parse_hhmmss_fractional(args.start)
@@ -360,7 +326,7 @@ def main():
         if site in tiff_candidates:
             tiff_metadata[site] = build_tiff_metadata(tiff_candidates[site], frame_interval)
 
-    traj_configs = trajectory_configs(args.mission, date=args.date)
+    traj_configs = trajectory_config_tuples(args.mission, date=args.date)
     traj_lookups = {
         key: build_traj_lookup(str(path), color=args.color)
         for key, _tag, _label, path in traj_configs

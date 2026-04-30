@@ -1,4 +1,3 @@
-import csv
 from inspect import currentframe
 from pathlib import Path
 
@@ -12,8 +11,10 @@ import numpy as np
 import magcoordmap as mcm
 from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
-from core.paths import COAST_LAT_PATH, COAST_LON_PATH, RECEIVERS_PATH, filter_receivers_for_mission, mission_output_dir
+from core.missions import mission_output_dir, mission_trajectory_paths, trajectory_display_labels
+from core.paths import COAST_LAT_PATH, COAST_LON_PATH
 from core.plot_norm import choose_image_cmap, compute_linear_image_limits, compute_log_image_limits
+from core.receivers import filter_receivers_for_mission, load_receivers
 from core.time_utils import format_time_label, hhmmss_fractional_to_seconds, sanitize_time_for_filename
 from core.traj_utils import (
     build_traj_lookup,
@@ -22,10 +23,8 @@ from core.traj_utils import (
     get_launch_start_from_traj_csv,
     load_traj,
     load_traj_records,
-    mission_trajectory_paths,
     lookup_traj_geodetic_position,
     mapped_apex_height,
-    trajectory_display_labels,
     trajectory_marker_second,
 )
 
@@ -46,26 +45,6 @@ def channel_label(color):
 
 def print_warning(message):
     print(f"Warning: {message}")
-
-
-def load_receivers(path=RECEIVERS_PATH):
-    try:
-        with open(path, "r", encoding="utf-8", newline="") as fd:
-            reader = csv.DictReader(fd)
-            return [
-                {
-                    "name": row["Name"].strip(),
-                    "acronym": row["acronym"].strip(),
-                    "lon": float(row["Lon"]),
-                    "lat": float(row["Lat"]),
-                    "alt_m": float(row.get("Alt_m", 0.0) or 0.0),
-                }
-                for row in reader
-                if row.get("Lon") and row.get("Lat")
-            ]
-    except FileNotFoundError:
-        print_warning(f"Receiver file not found: {path}. Receiver and IPP overlays will be skipped.")
-        return []
 
 
 def empty_traj_context():
@@ -413,7 +392,7 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
 
 
 def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS"):
-    receivers = filter_receivers_for_mission(load_receivers(), mission) if (plot_receivers or plot_ipps) else []
+    receivers = filter_receivers_for_mission(load_receivers(warn=print_warning), mission) if (plot_receivers or plot_ipps) else []
     if pretty:
         fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex)
     else:

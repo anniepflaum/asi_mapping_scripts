@@ -26,7 +26,7 @@ from pathlib import Path
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 
 from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
-from core.paths import mission_output_dir
+from core.missions import default_date, default_sites, mission_output_dir, validate_color_and_sites
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -68,10 +68,8 @@ def format_step_token(step_seconds):
 def effective_sites(args):
     if args.sites is not None:
         sites = [site.upper() for site in args.sites]
-    elif args.mission == "GIRAFF":
-        sites = ["VEE"]
     else:
-        sites = ["ARV", "VEE", "BVR"]
+        sites = default_sites(args.mission)
     if args.mission == "GIRAFF":
         return ["VEE"]
     return sorted(sites)
@@ -171,15 +169,11 @@ def main():
     args = ap.parse_args()
     args.mission = args.mission.upper()
     if args.date is None:
-        args.date = "20250202" if args.mission == "GIRAFF" else "20260210"
-    if args.mission == "GIRAFF":
-        if args.color != "green":
-            ap.error("--mission GIRAFF only supports --color green")
-        if args.sites is not None:
-            selected_sites = {site.upper() for site in args.sites}
-            invalid_sites = sorted(selected_sites - {"VEE"})
-            if invalid_sites:
-                ap.error(f"--mission GIRAFF only supports VEE TIFFs; remove site(s): {', '.join(invalid_sites)}")
+        args.date = default_date(args.mission)
+    if args.sites is not None:
+        validate_color_and_sites(ap, args.mission, args.color, args.sites, giraff_message_site="VEE TIFFs")
+    else:
+        validate_color_and_sites(ap, args.mission, args.color, default_sites(args.mission), giraff_message_site="VEE TIFFs")
 
     try:
         parse_hhmmss_fractional(args.start)

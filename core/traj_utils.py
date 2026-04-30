@@ -14,11 +14,10 @@ from apexpy import Apex
 from core.paths import (
     GIRAFF_380_TRAJECTORY_PATH,
     GIRAFF_381_TRAJECTORY_PATH,
-    GIRAFF_TRAJECTORY_PATHS_BY_DATE,
     GNEISS_LEFT_TRAJECTORY_PATH,
     GNEISS_RIGHT_TRAJECTORY_PATH,
-    MISSION_TRAJECTORY_PATHS,
 )
+from core.missions import mission_trajectory_paths, trajectory_display_labels
 from core.time_utils import hhmmss_fractional_to_seconds
 
 
@@ -71,31 +70,6 @@ def format_seconds_of_day(seconds):
     frac_str = f"{frac:.6f}".split(".")[1].rstrip("0")
     base = f"{hours:02d}{minutes:02d}{whole_seconds:02d}"
     return f"{base}.{frac_str}" if frac_str else base
-
-
-def normalize_date_key(date=None):
-    if date is None:
-        return None
-    return str(date).replace("-", "")
-
-
-def mission_trajectory_paths(mission, date=None):
-    mission_key = str(mission).upper()
-    date_key = normalize_date_key(date)
-    if mission_key == "GIRAFF" and date_key in GIRAFF_TRAJECTORY_PATHS_BY_DATE:
-        return GIRAFF_TRAJECTORY_PATHS_BY_DATE[date_key]
-    if mission_key not in MISSION_TRAJECTORY_PATHS:
-        raise ValueError(f"Unsupported mission: {mission}")
-    return MISSION_TRAJECTORY_PATHS[mission_key]
-
-
-def trajectory_display_labels(mission, date=None):
-    mission_key = str(mission).upper()
-    if mission_key == "GIRAFF":
-        date_key = normalize_date_key(date)
-        rocket = "36380" if date_key == "20250209" else "36381"
-        return {"main": f"{rocket} Main", "main_tag": rocket}
-    return {"left": "36.397", "right": "36.398", "left_tag": "397", "right_tag": "398"}
 
 
 def load_traj_records(filename):

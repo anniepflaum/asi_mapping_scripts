@@ -7,7 +7,8 @@ from pathlib import Path
 
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
-from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH, mission_output_dir
+from core.missions import mission_output_dir
+from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
 from core.skymaps import load_skymaps
 import matplotlib.dates as mdates
 import matplotlib as mpl

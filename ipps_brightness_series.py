@@ -29,10 +29,11 @@ from core.masks import build_overlap_masks
 from core.remote_data import retrieve_image
 from core.skymaps import load_skymaps
 from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
-from core.paths import filter_receivers_for_mission, mission_output_dir
+from core.missions import default_date, default_sites, mission_output_dir, trajectory_config_tuples, validate_color_and_sites
+from core.receivers import filter_receivers_for_mission, load_receivers
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
-from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, mapped_apex_height, mission_trajectory_paths, trajectory_display_labels
-from traj_brightness_series import count_steps, format_time_arg, load_receivers, load_tiff_frame_with_metadata, print_progress
+from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, mapped_apex_height
+from traj_brightness_series import count_steps, format_time_arg, load_tiff_frame_with_metadata, print_progress
 
 
 def receiver_suffix(receivers, all_receivers):
@@ -205,17 +206,6 @@ def compute_receiver_ipp_samples(receivers, rocket_geo, skymaps, imgs_raw, ipp_h
     return samples
 
 
-def trajectory_configs(mission, date=None):
-    paths = mission_trajectory_paths(mission, date=date)
-    labels = trajectory_display_labels(mission, date=date)
-    if str(mission).upper() == "GIRAFF":
-        return [("main", labels["main_tag"], labels["main"], paths["main"])]
-    return [
-        ("left", labels["left_tag"], labels["left"], paths["left"]),
-        ("right", labels["right_tag"], labels["right"], paths["right"]),
-    ]
-
-
 def build_fieldnames(receivers, rocket_labels):
     fieldnames = ["time"]
     for rocket_label in rocket_labels:
@@ -297,15 +287,10 @@ def main():
     args = ap.parse_args()
     args.mission = args.mission.upper()
     if args.date is None:
-        args.date = "20250202" if args.mission == "GIRAFF" else "20260210"
+        args.date = default_date(args.mission)
     if args.sites is None:
-        args.sites = ["VEE"] if args.mission == "GIRAFF" else ["ARV", "BVR", "VEE", "PKR"]
-    if args.mission == "GIRAFF":
-        if args.color != "green":
-            ap.error("--mission GIRAFF only supports --color green")
-        invalid_sites = sorted({site.upper() for site in args.sites} - {"VEE"})
-        if invalid_sites:
-            ap.error(f"--mission GIRAFF only supports VEE; remove site(s): {', '.join(invalid_sites)}")
+        args.sites = default_sites(args.mission, include_pkr=True)
+    validate_color_and_sites(ap, args.mission, args.color, args.sites)
 
     try:
         parse_hhmmss_fractional(args.start)
@@ -342,7 +327,7 @@ def main():
             tiff_metadata[site] = build_tiff_metadata(tiff_candidates[site], frame_interval)
 
     ipp_height_km = mapped_apex_height(args.color)
-    traj_configs = trajectory_configs(args.mission, date=args.date)
+    traj_configs = trajectory_config_tuples(args.mission, date=args.date)
     traj_lookups = {
         key: build_traj_lookup(str(path), color=args.color)
         for key, _tag, _label, path in traj_configs

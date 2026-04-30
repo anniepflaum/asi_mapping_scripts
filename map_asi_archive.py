@@ -38,7 +38,7 @@ from core.plot_norm import compute_reference_norm_limits, reference_normalizatio
 from core.plotting import plot_map
 from core.remote_data import retrieve_image, retrieve_pfisr
 from core.skymaps import load_skymaps
-from core.paths import mission_output_dir
+from core.missions import default_date, default_sites, mission_output_dir, validate_color_and_sites
 from core.time_utils import (
     parse_date_and_time,
     parse_hhmmss_fractional,
@@ -91,9 +91,9 @@ def main():
     args = ap.parse_args()
     args.mission = args.mission.upper()
     if args.date is None:
-        args.date = "20250202" if args.mission == "GIRAFF" else "20260210"
+        args.date = default_date(args.mission)
     if args.sites is None:
-        args.sites = ["VEE"] if args.mission == "GIRAFF" else ["ARV", "VEE", "BVR"]
+        args.sites = default_sites(args.mission)
     try:
         parse_hhmmss_fractional(args.time)
     except ValueError as exc:
@@ -104,12 +104,8 @@ def main():
             ap.error("--bounds must satisfy LON_MIN < LON_MAX and LAT_MIN < LAT_MAX")
     # --- Load geographic mapping for each ASI site ---
     selected_sites = set([s.upper() for s in args.sites])
+    validate_color_and_sites(ap, args.mission, args.color, selected_sites, giraff_message_site="VEE TIFFs")
     if args.mission == "GIRAFF":
-        if args.color != "green":
-            ap.error("--mission GIRAFF only supports --color green")
-        invalid_sites = sorted(selected_sites - {"VEE"})
-        if invalid_sites:
-            ap.error(f"--mission GIRAFF only supports VEE TIFFs; remove site(s): {', '.join(invalid_sites)}")
         selected_sites = {"VEE"}
     skymaps = load_skymaps(selected_sites, color=args.color, mission=args.mission)
 
