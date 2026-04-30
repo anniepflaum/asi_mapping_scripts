@@ -1,6 +1,6 @@
 import numpy as np
 
-from core.constants import NORMALIZATION_LOWER_PERCENTILE, NORMALIZATION_UPPER_PERCENTILE
+from core.constants import NORMALIZATION_LOWER_PERCENTILE, NORMALIZATION_UPPER_PERCENTILE, REFERENCE_NORMALIZATION_TIME
 from core.remote_data import retrieve_image
 from core.time_utils import parse_date_and_time
 from core.fetch_url import closest_amisr_png_url
@@ -45,6 +45,16 @@ def choose_image_cmap(colorbar_color, color):
     if colorbar_color == "viridis":
         return "viridis"
     return "Reds" if str(color).lower() == "red" else "Greens"
+
+
+def reference_normalization_time(mission, date, time_str):
+    if str(mission).upper() == "GIRAFF":
+        if str(date) == "20250202":
+            return "071130"
+        if str(date) == "20250209":
+            return "083600"
+        return time_str
+    return REFERENCE_NORMALIZATION_TIME
 
 
 def compute_reference_norm_limits(skymaps, selected_sites, date, ref_time_str, color, frame_interval, colorbar_scale="linear", mission="GNEISS"):

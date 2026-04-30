@@ -29,7 +29,7 @@ from core.masks import build_overlap_masks
 from core.remote_data import retrieve_image
 from core.skymaps import load_skymaps
 from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
-from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
+from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH, mission_output_dir
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, mapped_apex_height
 from traj_brightness_series import count_steps, format_time_arg, load_receivers, load_tiff_frame_with_metadata, print_progress
@@ -314,7 +314,7 @@ def main():
 
     out_path = make_output_path(args.output, args.start, args.end, args.step, receivers, all_receivers)
     if not out_path.is_absolute():
-        out_path = Path("..") / "mapped" / args.color / out_path
+        out_path = mission_output_dir("GNEISS", color=args.color, date=args.date) / out_path
 
     fieldnames = build_fieldnames(receivers)
 

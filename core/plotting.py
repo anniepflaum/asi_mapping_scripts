@@ -12,7 +12,7 @@ import numpy as np
 import magcoordmap as mcm
 from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
-from core.paths import COAST_LAT_PATH, COAST_LON_PATH, RECEIVERS_PATH
+from core.paths import COAST_LAT_PATH, COAST_LON_PATH, RECEIVERS_PATH, mission_output_dir
 from core.plot_norm import choose_image_cmap, compute_linear_image_limits, compute_log_image_limits
 from core.time_utils import format_time_label, hhmmss_fractional_to_seconds, sanitize_time_for_filename
 from core.traj_utils import (
@@ -406,6 +406,8 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
             output_path = default_with_args(args)
         else:
             output_path = default_without_args
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=150)
     print(f"Saved mapped image to {output_path}")
 
@@ -461,8 +463,8 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=Non
         color,
         build_time_label(get_plot_call_args()),
         output_path,
-        lambda args: f"../mapped/{mission}_launch_science_fast_{args.date}_{sanitize_time_for_filename(args.time)}.png",
-        f"../mapped/{mission}_launch_science_fast.png",
+        lambda args: mission_output_dir(mission, color=args.color, date=args.date) / f"{mission}_launch_science_fast_{args.date}_{sanitize_time_for_filename(args.time)}.png",
+        mission_output_dir(mission, color=color) / f"{mission}_launch_science_fast.png",
         brightness_markers=brightness_markers,
         shared_norm=shared_norm,
         mission=mission,

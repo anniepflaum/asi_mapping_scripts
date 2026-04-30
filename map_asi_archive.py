@@ -33,11 +33,12 @@ matplotlib.use("Agg")
 
 from core.masks import build_overlap_masks
 from core.fetch_url import closest_amisr_png_url
-from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED, REFERENCE_NORMALIZATION_TIME
-from core.plot_norm import compute_reference_norm_limits
+from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
+from core.plot_norm import compute_reference_norm_limits, reference_normalization_time
 from core.plotting import plot_map
 from core.remote_data import retrieve_image, retrieve_pfisr
 from core.skymaps import load_skymaps
+from core.paths import mission_output_dir
 from core.time_utils import (
     parse_date_and_time,
     parse_hhmmss_fractional,
@@ -78,16 +79,10 @@ def main():
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling for ASI intensity")
     ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
     ap.add_argument(
-        "--no-shared-norm",
-        dest="shared_norm",
-        action="store_false",
-        default=None,
-        help="Disable cross-site shared brightness normalization and normalize each output frame independently",
-    )
-    ap.add_argument(
         "--shared-norm",
         dest="shared_norm",
         action="store_true",
+        default=True,
         help="Enable cross-site shared brightness normalization",
     )
     ap.add_argument("--plot-receivers", action="store_true", help="Plot receiver locations from receivers.csv on the map")
@@ -99,8 +94,6 @@ def main():
         args.date = "20250202" if args.mission == "GIRAFF" else "20260210"
     if args.sites is None:
         args.sites = ["VEE"] if args.mission == "GIRAFF" else ["ARV", "VEE", "BVR"]
-    if args.shared_norm is None:
-        args.shared_norm = args.mission != "GIRAFF"
     try:
         parse_hhmmss_fractional(args.time)
     except ValueError as exc:
@@ -146,7 +139,7 @@ def main():
     # --- Process TIFF-backed sites: search multiple tiles and select closest frame ---
     fixed_norm_limits = None
     if args.shared_norm:
-        reference_norm_time = time_str if args.mission == "GIRAFF" else REFERENCE_NORMALIZATION_TIME
+        reference_norm_time = reference_normalization_time(args.mission, date, time_str)
         fixed_norm_limits = compute_reference_norm_limits(
             skymaps,
             selected_sites,
@@ -187,7 +180,7 @@ def main():
     # --- Compose output path for mapped image, include plotting mode ---
     sites_str = '_'.join(sorted(selected_sites))
     color = args.color
-    output_path = f"../mapped/{color}/{args.mission}_launch_{color}_{sites_str}_{date}_{time_token}.png"
+    output_path = mission_output_dir(args.mission, color=args.color, date=date) / f"{args.mission}_launch_{color}_{sites_str}_{date}_{time_token}.png"
 
     # --- Run downstream plotting even if no TIFFs were found ---
     plot_map(

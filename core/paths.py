@@ -7,6 +7,7 @@ WORKSPACE_DIR = PROJECT_DIR.parent
 
 GNEISS_TRAJECTORIES_DIR = WORKSPACE_DIR / "trajectories" / "GNEISS"
 GIRAFF_TRAJECTORIES_DIR = WORKSPACE_DIR / "trajectories" / "GIRAFF"
+MAPPED_DIR = WORKSPACE_DIR / "mapped"
 COAST_DIR = PROJECT_DIR / "coast"
 RECEIVERS_PATH = WORKSPACE_DIR / "receivers.csv"
 
@@ -36,3 +37,24 @@ GIRAFF_TRAJECTORY_PATHS_BY_DATE = {
         "main": GIRAFF_380_TRAJECTORY_PATH,
     },
 }
+
+
+def normalize_date_key(date=None):
+    if date is None:
+        return None
+    return str(date).replace("-", "")
+
+
+def giraff_rocket_id_for_date(date=None):
+    date_key = normalize_date_key(date)
+    if date_key == "20250209":
+        return "380"
+    return "381"
+
+
+def mission_output_dir(mission, color="green", date=None):
+    mission_key = str(mission).upper()
+    base = MAPPED_DIR / str(color).lower()
+    if mission_key == "GIRAFF":
+        return base / "GIRAFF" / giraff_rocket_id_for_date(date)
+    return base / mission_key

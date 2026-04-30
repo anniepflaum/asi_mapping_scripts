@@ -128,7 +128,13 @@ python3 trajectory_keogram.py \
 
 ## Output
 
-Outputs are typically written under `../mapped/<color>/`, for example:
+Outputs are typically written under color and mission directories:
+
+- `../mapped/<color>/GNEISS/`
+- `../mapped/<color>/GIRAFF/380/`
+- `../mapped/<color>/GIRAFF/381/`
+
+These include:
 
 - mapped PNGs from `map_asi_archive.py`
 - brightness-vs-time CSVs and PNG plots from `traj_brightness_series.py`

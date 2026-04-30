@@ -7,7 +7,7 @@ from pathlib import Path
 
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
-from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
+from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH, mission_output_dir
 from core.skymaps import load_skymaps
 import matplotlib.dates as mdates
 import matplotlib as mpl
@@ -27,7 +27,7 @@ def build_output_path(output_arg, date_str, start, end, color):
         return Path(output_arg)
     start_tok = sanitize_time_for_filename(start)
     end_tok = sanitize_time_for_filename(end)
-    return Path(f"../mapped/{color}/trajectory_keogram_{color}_{date_str}_{start_tok}_{end_tok}.png")
+    return mission_output_dir("GNEISS", color=color, date=date_str) / f"trajectory_keogram_{color}_{date_str}_{start_tok}_{end_tok}.png"
 
 def build_site_sampler(skymaps, site):
     lat_grid = skymaps[site]["lat"]

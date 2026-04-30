@@ -26,6 +26,7 @@ from pathlib import Path
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 
 from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
+from core.paths import mission_output_dir
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -82,14 +83,14 @@ def series_output_dir(args):
     end_token = sanitize_time_for_filename(args.end)
     step_token = format_step_token(args.step)
     folder_name = f"{args.mission}_launch_{args.color}_{sites_str}_{args.date}_{start_token}_to_{end_token}_step_{step_token}"
-    return SCRIPT_DIR.parent / "mapped" / args.color / folder_name
+    return mission_output_dir(args.mission, color=args.color, date=args.date) / folder_name
 
 
 def frame_output_path(args, time_arg):
     sites_str = "_".join(effective_sites(args))
     time_token = sanitize_time_for_filename(time_arg)
     filename = f"{args.mission}_launch_{args.color}_{sites_str}_{args.date}_{time_token}.png"
-    return SCRIPT_DIR.parent / "mapped" / args.color / filename
+    return mission_output_dir(args.mission, color=args.color, date=args.date) / filename
 
 
 def move_frame_to_series_dir(args, time_arg, output_dir):
@@ -122,10 +123,8 @@ def build_command(args, time_arg):
     ]
     if args.sites is not None:
         cmd.extend(["--sites", *args.sites])
-    if args.shared_norm is True:
+    if args.shared_norm:
         cmd.append("--shared-norm")
-    elif args.shared_norm is False:
-        cmd.append("--no-shared-norm")
     if args.bounds is not None:
         cmd.extend(["--bounds", *(str(v) for v in args.bounds)])
     if args.pretty:
@@ -159,16 +158,10 @@ def main():
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling")
     ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
     ap.add_argument(
-        "--no-shared-norm",
-        dest="shared_norm",
-        action="store_false",
-        default=None,
-        help="Disable cross-site shared brightness normalization in downstream map calls",
-    )
-    ap.add_argument(
         "--shared-norm",
         dest="shared_norm",
         action="store_true",
+        default=True,
         help="Enable cross-site shared brightness normalization in downstream map calls",
     )
     ap.add_argument("--pretty", action="store_true", help="Use Cartopy plotting")
@@ -179,8 +172,6 @@ def main():
     args.mission = args.mission.upper()
     if args.date is None:
         args.date = "20250202" if args.mission == "GIRAFF" else "20260210"
-    if args.shared_norm is None:
-        args.shared_norm = args.mission != "GIRAFF"
     if args.mission == "GIRAFF":
         if args.color != "green":
             ap.error("--mission GIRAFF only supports --color green")

@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.io import loadmat
 
-from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
+from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH, mission_output_dir
 from core.traj_utils import get_launch_start_from_traj_csv
 from core.time_utils import hhmmss_fractional_to_seconds
 
@@ -24,7 +24,7 @@ def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--ipp-csv",
-        default="../mapped/green/ipps_brightness_series_101900_102900_step0p05.csv",
+        default=str(mission_output_dir("GNEISS", color="green") / "ipps_brightness_series_101900_102900_step0p05.csv"),
         help="Path to the IPP brightness CSV",
     )
     ap.add_argument(
@@ -34,7 +34,7 @@ def parse_args():
     )
     ap.add_argument(
         "--output-dir",
-        default="../mapped/green/faraday_ipp_comparisons",
+        default=str(mission_output_dir("GNEISS", color="green") / "faraday_ipp_comparisons"),
         help="Directory for output comparison plots",
     )
     return ap.parse_args()

@@ -31,6 +31,7 @@ from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
+from core.plot_norm import compute_reference_norm_limits, reference_normalization_time
 from core.remote_data import retrieve_image
 from core.skymaps import load_skymaps
 from core.time_utils import (
@@ -39,7 +40,7 @@ from core.time_utils import (
     sanitize_time_for_filename,
 )
 from core.fetch_url import closest_amisr_png_url
-from core.paths import RECEIVERS_PATH
+from core.paths import RECEIVERS_PATH, mission_output_dir
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import (
     build_traj_lookup,
@@ -82,7 +83,7 @@ def make_output_path(out_arg, mission, date, start, end, step):
     start_tok = sanitize_time_for_filename(start)
     end_tok = sanitize_time_for_filename(end)
     step_tok = str(step).replace(".", "p")
-    return Path(f"{series_prefix(mission)}_{start_tok}_{end_tok}_step{step_tok}.csv")
+    return Path(f"{series_prefix(mission)}_{date}_{start_tok}_{end_tok}_step{step_tok}.csv")
 
 
 def make_plot_output_path(csv_path, output_arg):
@@ -96,12 +97,13 @@ def make_receiver_output_path(csv_path):
 
 
 def parse_series_filename(csv_path, prefix):
-    pattern = rf"^{re.escape(prefix)}_(\d{{6}}(?:p\d+)?)_(\d{{6}}(?:p\d+)?)_step(\d+(?:p\d+)?)\.csv$"
+    pattern = rf"^{re.escape(prefix)}_(?:(\d{{8}})_)?(\d{{6}}(?:p\d+)?)_(\d{{6}}(?:p\d+)?)_step(\d+(?:p\d+)?)\.csv$"
     match = re.match(pattern, csv_path.name)
     if not match:
         return None
-    start_tok, end_tok, step_tok = match.groups()
+    date_tok, start_tok, end_tok, step_tok = match.groups()
     return {
+        "date": date_tok,
         "start_tok": start_tok,
         "end_tok": end_tok,
         "start_time": start_tok.replace("p", "."),
@@ -143,6 +145,8 @@ def find_reusable_csv(preferred_path, prefix, date, start, end, step):
     for candidate in preferred_path.parent.glob(f"{prefix}_*_step*.csv"):
         parsed = parse_series_filename(candidate, prefix)
         if parsed is None:
+            continue
+        if parsed.get("date") is not None and parsed["date"] != date:
             continue
         try:
             candidate_start_dt = parse_date_and_time(date, parsed["start_time"])
@@ -262,11 +266,15 @@ def trajectory_configs(mission, date=None):
 
 
 def get_site_change_times(rows, fieldname):
+    non_empty_sites = {row.get(fieldname) for row in rows if row.get(fieldname)}
+    if len(non_empty_sites) <= 1:
+        return []
+
     change_times = []
     previous_value = None
     first_row = True
     for row in rows:
-        current_value = row[fieldname]
+        current_value = row.get(fieldname, "")
         if first_row:
             previous_value = current_value
             first_row = False
@@ -312,6 +320,15 @@ def sample_receiver_ipp_brightnesses(receivers, rocket_geo, skymaps, imgs_raw, i
         brightnesses.append(sample["raw_brightness"] if sample else None)
         sites.append(sample["site"] if sample else "")
     return brightnesses, sites
+
+
+def normalize_reference_brightness(raw_brightness, norm_limits):
+    if raw_brightness is None or norm_limits is None:
+        return None
+    vmin, vmax = norm_limits
+    if vmin is None or vmax is None or vmax <= vmin:
+        return None
+    return (float(raw_brightness) - float(vmin)) / (float(vmax) - float(vmin))
 
 def main():
     ap = argparse.ArgumentParser()
@@ -380,7 +397,7 @@ def main():
 
     out_path = make_output_path(args.output, args.mission, args.date, args.start, args.end, args.step)
     if not out_path.is_absolute():
-        out_path = Path("..") / "mapped" / args.color / out_path
+        out_path = mission_output_dir(args.mission, color=args.color, date=args.date) / out_path
 
     if args.no_csv:
         if args.no_plot:
@@ -397,7 +414,12 @@ def main():
         rows = [row for row in rows if row.get("time") in requested_times]
         plot_times = [dt.datetime.fromisoformat(row["time"]) for row in rows if row.get("time")]
         plot_series = {
-            key: [float(row[f"{key}_brightness"]) if row.get(f"{key}_brightness") else None for row in rows]
+            key: [
+                float(row[f"{key}_reference_norm_brightness"])
+                if args.mission == "GIRAFF" and row.get(f"{key}_reference_norm_brightness")
+                else (float(row[f"{key}_brightness"]) if row.get(f"{key}_brightness") else None)
+                for row in rows
+            ]
             for key in traj_lookups
         }
         site_changes = {key: get_site_change_times(rows, f"{key}_frame_site") for key in traj_lookups}
@@ -427,6 +449,8 @@ def main():
                 f"{key}_brightness",
             ]
         )
+        if args.mission == "GIRAFF":
+            fieldnames.append(f"{key}_reference_norm_brightness")
     receiver_fieldnames = ["time"]
     write_receiver_ipps = args.mission != "GIRAFF"
     if write_receiver_ipps:
@@ -440,6 +464,20 @@ def main():
     receiver_rows = []
     plot_times = []
     plot_series = {key: [] for key in traj_lookups}
+    reference_norm_limits = None
+    reference_norm_time = None
+    if args.mission == "GIRAFF":
+        reference_norm_time = reference_normalization_time(args.mission, args.date, args.start)
+        reference_norm_limits = compute_reference_norm_limits(
+            skymaps,
+            selected_sites,
+            args.date,
+            reference_norm_time,
+            args.color,
+            frame_interval,
+            colorbar_scale="linear",
+            mission=args.mission,
+        )
     step_td = dt.timedelta(seconds=args.step)
     total_steps = count_steps(start_dt, end_dt, args.step)
     step_idx = 0
@@ -487,7 +525,12 @@ def main():
             else:
                 receiver_brightnesses, receiver_sites = [], []
             rocket_lat, rocket_lon, rocket_alt_km = geo
-            plot_series[key].append(sample["raw_brightness"] if sample else None)
+            reference_norm_brightness = (
+                normalize_reference_brightness(sample["raw_brightness"], reference_norm_limits)
+                if sample
+                else None
+            )
+            plot_series[key].append(reference_norm_brightness if reference_norm_brightness is not None else (sample["raw_brightness"] if sample else None))
             row[f"{key}_frame_site"] = frame_info[sample["site"]]["site"] if sample and sample["site"] in frame_info else ""
             row[f"{key}_frame_time"] = frame_info[sample["site"]]["frame_time"] if sample and sample["site"] in frame_info else ""
             row[f"{key}_rocket_lat"] = f"{rocket_lat:.6f}" if rocket_lat is not None else ""
@@ -495,6 +538,8 @@ def main():
             row[f"{key}_rocket_alt_km"] = f"{rocket_alt_km:.6f}" if rocket_alt_km is not None else ""
             row[f"{key}_percentile"] = f"{sample['percentile']:.3f}" if sample else ""
             row[f"{key}_brightness"] = f"{sample['raw_brightness']:.3f}" if sample else ""
+            if args.mission == "GIRAFF":
+                row[f"{key}_reference_norm_brightness"] = f"{reference_norm_brightness:.6f}" if reference_norm_brightness is not None else ""
             for receiver, brightness, site_name in zip(receivers, receiver_brightnesses, receiver_sites):
                 acronym = receiver["acronym"]
                 tag = traj_tags[key]
