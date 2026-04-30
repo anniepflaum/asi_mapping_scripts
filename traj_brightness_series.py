@@ -39,7 +39,7 @@ from core.time_utils import (
     sanitize_time_for_filename,
 )
 from core.fetch_url import closest_amisr_png_url
-from core.missions import default_date, default_sites, mission_output_dir, trajectory_config_tuples, validate_color_and_sites
+from core.missions import default_date, default_sites, default_time_range, mission_output_dir, trajectory_config_tuples, validate_color_and_sites
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import (
     build_traj_lookup,
@@ -278,9 +278,9 @@ def normalize_reference_brightness(raw_brightness, norm_limits):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default=None, help="Date YYYYMMDD")
-    ap.add_argument("--start", required=True, help="Start time HHMMSS(.fraction)")
-    ap.add_argument("--end", required=True, help="End time HHMMSS(.fraction)")
-    ap.add_argument("--step", type=float, default=0.05, help="Step size in seconds (default: 0.3)")
+    ap.add_argument("--start", default=None, help="Start time HHMMSS(.fraction); defaults to mission rocket window")
+    ap.add_argument("--end", default=None, help="End time HHMMSS(.fraction); defaults to mission rocket window")
+    ap.add_argument("--step", type=float, default=0.05, help="Step size in seconds")
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to include")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default="GNEISS", help="Mission dataset to use")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
@@ -293,6 +293,11 @@ def main():
     args.mission = args.mission.upper()
     if args.date is None:
         args.date = default_date(args.mission)
+    default_start, default_end = default_time_range(args.mission, args.date)
+    if args.start is None:
+        args.start = default_start
+    if args.end is None:
+        args.end = default_end
     if args.sites is None:
         args.sites = default_sites(args.mission, include_pkr=True)
     validate_color_and_sites(ap, args.mission, args.color, args.sites)

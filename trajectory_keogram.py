@@ -7,7 +7,7 @@ from pathlib import Path
 
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
-from core.missions import mission_output_dir
+from core.missions import default_time_range, mission_output_dir
 from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
 from core.skymaps import load_skymaps
 import matplotlib.dates as mdates
@@ -114,14 +114,19 @@ def compute_flight_time_bounds(start_dt, end_dt, launch_dt, traj_lookup):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default="20260210", help="Date YYYYMMDD")
-    ap.add_argument("--start", required=True, help="Start time HHMMSS(.fraction)")
-    ap.add_argument("--end", required=True, help="End time HHMMSS(.fraction)")
+    ap.add_argument("--start", default=None, help="Start time HHMMSS(.fraction); defaults to broad GNEISS rocket window")
+    ap.add_argument("--end", default=None, help="End time HHMMSS(.fraction); defaults to broad GNEISS rocket window")
     ap.add_argument("--step", type=float, default=0.3, help="Step size in seconds")
     ap.add_argument("--samples", type=int, default=480, help="Number of equal-time samples along each trajectory")
     ap.add_argument("--sites", nargs="*", default=["ARV", "BVR", "VEE"], help="Sites to merge into the keogram")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--output", default=None, help="Output PNG path")
     args = ap.parse_args()
+    default_start, default_end = default_time_range("GNEISS", args.date)
+    if args.start is None:
+        args.start = default_start
+    if args.end is None:
+        args.end = default_end
 
     try:
         parse_hhmmss_fractional(args.start)

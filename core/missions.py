@@ -17,6 +17,12 @@ GIRAFF_RECEIVER_ACRONYMS = ("VEE", "TOO", "PKR")
 GIRAFF_SITE_ACRONYMS = ("VEE",)
 GNEISS_TIFF_SITE_ACRONYMS = ("ARV", "VEE", "BVR")
 GNEISS_ALL_SITE_ACRONYMS = ("ARV", "BVR", "VEE", "PKR")
+ROCKET_TIME_WINDOWS = {
+    "397": ("101900", "102818"),
+    "398": ("101930", "102848"),
+    "381": ("070729", "071636"),
+    "380": ("083520", "084410"),
+}
 
 
 @dataclass(frozen=True)
@@ -45,6 +51,15 @@ def default_sites(mission, include_pkr=False):
     if mission_key(mission) == "GIRAFF":
         return list(GIRAFF_SITE_ACRONYMS)
     return list(GNEISS_ALL_SITE_ACRONYMS if include_pkr else GNEISS_TIFF_SITE_ACRONYMS)
+
+
+def default_time_range(mission, date=None, rocket_tags=None):
+    """Return the default HHMMSS start/end window for a mission product."""
+    key = mission_key(mission)
+    if rocket_tags is None:
+        rocket_tags = [giraff_rocket_id_for_date(date)] if key == "GIRAFF" else ["397", "398"]
+    windows = [ROCKET_TIME_WINDOWS[str(tag)] for tag in rocket_tags]
+    return min(start for start, _end in windows), max(end for _start, end in windows)
 
 
 def validate_color_and_sites(parser, mission, color, sites, giraff_message_site="VEE"):

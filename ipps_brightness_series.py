@@ -29,7 +29,7 @@ from core.masks import build_overlap_masks
 from core.remote_data import retrieve_image
 from core.skymaps import load_skymaps
 from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
-from core.missions import default_date, default_sites, mission_output_dir, trajectory_config_tuples, validate_color_and_sites
+from core.missions import default_date, default_sites, default_time_range, mission_output_dir, trajectory_config_tuples, validate_color_and_sites
 from core.receivers import filter_receivers_for_mission, load_receivers
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, mapped_apex_height
@@ -271,8 +271,8 @@ def plot_ipps_timeseries(times, rows, receivers, rocket_labels, output_path, tit
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default=None, help="Date YYYYMMDD")
-    ap.add_argument("--start", required=True, help="Start time HHMMSS(.fraction)")
-    ap.add_argument("--end", required=True, help="End time HHMMSS(.fraction)")
+    ap.add_argument("--start", default=None, help="Start time HHMMSS(.fraction); defaults to mission rocket window")
+    ap.add_argument("--end", default=None, help="End time HHMMSS(.fraction); defaults to mission rocket window")
     ap.add_argument("--step", type=float, default=0.05, help="Step size in seconds")
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to include")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default="GNEISS", help="Mission dataset to use")
@@ -282,12 +282,17 @@ def main():
     ap.add_argument("--plot-output", default=None, help="Optional output PNG path for the brightness plot")
     ap.add_argument("--plot-title", default=None, help="Optional plot title")
     ap.add_argument("--no-plot", action="store_true", help="Write the CSV only and skip the PNG plot")
-    ap.add_argument("--no-csv", dest="no_csv", action="store_true", default=True, help="Skip CSV generation and plot from an existing CSV instead (default)")
+    ap.add_argument("--no-csv", dest="no_csv", action="store_true", default=False, help="Skip CSV generation and plot from an existing CSV instead (default)")
     ap.add_argument("--csv", dest="no_csv", action="store_false", help="Generate a CSV instead of reusing an existing one")
     args = ap.parse_args()
     args.mission = args.mission.upper()
     if args.date is None:
         args.date = default_date(args.mission)
+    default_start, default_end = default_time_range(args.mission, args.date)
+    if args.start is None:
+        args.start = default_start
+    if args.end is None:
+        args.end = default_end
     if args.sites is None:
         args.sites = default_sites(args.mission, include_pkr=True)
     validate_color_and_sites(ap, args.mission, args.color, args.sites)

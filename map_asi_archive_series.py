@@ -5,8 +5,6 @@ Run map_asi_archive.py repeatedly over a requested time range.
 Example:
     python3 map_asi_archive_series.py \
       --date 20260210 \
-      --start 101900.0 \
-      --end 102900.0 \
       --step 10 \
       --sites ARV BVR VEE \
       --color green \
@@ -26,7 +24,7 @@ from pathlib import Path
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 
 from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
-from core.missions import default_date, default_sites, mission_output_dir, validate_color_and_sites
+from core.missions import default_date, default_sites, default_time_range, mission_output_dir, validate_color_and_sites
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -139,8 +137,8 @@ def build_command(args, time_arg):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default=None, help="Date YYYYMMDD")
-    ap.add_argument("--start", required=True, help="Start time HHMMSS(.fraction)")
-    ap.add_argument("--end", required=True, help="End time HHMMSS(.fraction)")
+    ap.add_argument("--start", default=None, help="Start time HHMMSS(.fraction); defaults to mission rocket window")
+    ap.add_argument("--end", default=None, help="End time HHMMSS(.fraction); defaults to mission rocket window")
     ap.add_argument("--step", type=float, default=10.0, help="Cadence in seconds")
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to pass to map_asi_archive.py")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default="GNEISS", help="Mission dataset to use")
@@ -170,6 +168,11 @@ def main():
     args.mission = args.mission.upper()
     if args.date is None:
         args.date = default_date(args.mission)
+    default_start, default_end = default_time_range(args.mission, args.date)
+    if args.start is None:
+        args.start = default_start
+    if args.end is None:
+        args.end = default_end
     if args.sites is not None:
         validate_color_and_sites(ap, args.mission, args.color, args.sites, giraff_message_site="VEE TIFFs")
     else:
