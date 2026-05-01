@@ -282,8 +282,7 @@ def main():
     ap.add_argument("--plot-output", default=None, help="Optional output PNG path for the brightness plot")
     ap.add_argument("--plot-title", default=None, help="Optional plot title")
     ap.add_argument("--no-plot", action="store_true", help="Write the CSV only and skip the PNG plot")
-    ap.add_argument("--no-csv", dest="no_csv", action="store_true", default=False, help="Skip CSV generation and plot from an existing CSV instead (default)")
-    ap.add_argument("--csv", dest="no_csv", action="store_false", help="Generate a CSV instead of reusing an existing one")
+    ap.add_argument("--no-csv", action="store_true", help="Skip CSV generation and plot from an existing CSV instead")
     args = ap.parse_args()
     args.mission = args.mission.upper()
     if args.date is None:

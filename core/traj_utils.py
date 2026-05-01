@@ -36,8 +36,8 @@ XLSX_ALT_COLUMN = "Alt"
 XLSX_GPS_MSEC_COLUMN = "GPS Time (mSec of week)"
 XLSX_GPS_WEEK_COLUMN = "GPS Week"
 GIRAFF_LAUNCH_DATETIMES_BY_TRAJECTORY = {
-    GIRAFF_381_TRAJECTORY_PATH.name: dt.datetime(2025, 2, 2),
-    GIRAFF_380_TRAJECTORY_PATH.name: dt.datetime(2025, 2, 9),
+    GIRAFF_381_TRAJECTORY_PATH.name: dt.datetime(2025, 2, 2, 7, 7, 15),
+    GIRAFF_380_TRAJECTORY_PATH.name: dt.datetime(2025, 2, 9, 8, 35, 1),
 }
 
 
@@ -147,7 +147,8 @@ def giraff_launch_datetime_for_trajectory(filename):
 
 
 def parse_giraff_sample_datetime(gps_msec_value, launch_datetime):
-    return launch_datetime + dt.timedelta(seconds=gps_msec_of_week_to_seconds_of_day(gps_msec_value))
+    sample_date = launch_datetime.date()
+    return dt.datetime.combine(sample_date, dt.time()) + dt.timedelta(seconds=gps_msec_of_week_to_seconds_of_day(gps_msec_value))
 
 
 def load_traj_records_xlsx(filename):
@@ -185,10 +186,19 @@ def load_traj_records_xlsx(filename):
         dtype=object,
     )
     utc_times = np.array(
+        [
+            sample_dt.hour * 3600.0
+            + sample_dt.minute * 60.0
+            + sample_dt.second
+            + sample_dt.microsecond / 1e6
+            for sample_dt in sample_datetimes
+        ],
+        dtype=float,
+    )
+    flight_times = np.array(
         [(sample_dt - launch_datetime).total_seconds() for sample_dt in sample_datetimes],
         dtype=float,
     )
-    flight_times = np.array([float(row[index_by_name[XLSX_FLIGHT_TIME_COLUMN]]) for row in samples], dtype=float)
     lats = np.array([float(row[index_by_name[XLSX_LAT_COLUMN]]) for row in samples], dtype=float)
     lons = np.array([float(row[index_by_name[XLSX_LON_COLUMN]]) for row in samples], dtype=float)
     alts = np.array([float(row[index_by_name[XLSX_ALT_COLUMN]]) for row in samples], dtype=float)

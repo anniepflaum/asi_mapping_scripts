@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build brightness keograms along the left and right trajectories."""
+"""Build brightness keograms along mission trajectories."""
 
 import argparse
 import datetime as dt
@@ -7,8 +7,14 @@ from pathlib import Path
 
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
-from core.missions import default_time_range, mission_output_dir
-from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
+from core.missions import (
+    default_date,
+    default_sites,
+    default_time_range,
+    mission_output_dir,
+    trajectory_config_tuples,
+    validate_color_and_sites,
+)
 from core.skymaps import load_skymaps
 import matplotlib.dates as mdates
 import matplotlib as mpl
@@ -23,12 +29,14 @@ from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates, load_
 from core.traj_utils import build_traj_lookup, get_launch_start_from_traj_csv, resample_traj_by_time
 
 
-def build_output_path(output_arg, date_str, start, end, color):
+def build_output_path(output_arg, mission, date_str, start, end, color):
     if output_arg:
         return Path(output_arg)
     start_tok = sanitize_time_for_filename(start)
     end_tok = sanitize_time_for_filename(end)
-    return mission_output_dir("GNEISS", color=color, date=date_str) / f"trajectory_keogram_{color}_{date_str}_{start_tok}_{end_tok}.png"
+    prefix = "trajectory_keogram" if mission == "GNEISS" else f"{mission}_trajectory_keogram"
+    return mission_output_dir(mission, color=color, date=date_str) / f"{prefix}_{color}_{date_str}_{start_tok}_{end_tok}.png"
+
 
 def build_site_sampler(skymaps, site):
     lat_grid = skymaps[site]["lat"]
@@ -113,20 +121,27 @@ def compute_flight_time_bounds(start_dt, end_dt, launch_dt, traj_lookup):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", default="20260210", help="Date YYYYMMDD")
-    ap.add_argument("--start", default=None, help="Start time HHMMSS(.fraction); defaults to broad GNEISS rocket window")
-    ap.add_argument("--end", default=None, help="End time HHMMSS(.fraction); defaults to broad GNEISS rocket window")
+    ap.add_argument("--date", default=None, help="Date YYYYMMDD")
+    ap.add_argument("--start", default=None, help="Start time HHMMSS(.fraction); defaults to mission rocket window")
+    ap.add_argument("--end", default=None, help="End time HHMMSS(.fraction); defaults to mission rocket window")
     ap.add_argument("--step", type=float, default=0.3, help="Step size in seconds")
     ap.add_argument("--samples", type=int, default=480, help="Number of equal-time samples along each trajectory")
-    ap.add_argument("--sites", nargs="*", default=["ARV", "BVR", "VEE"], help="Sites to merge into the keogram")
+    ap.add_argument("--sites", nargs="*", default=None, help="Sites to merge into the keogram")
+    ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default="GNEISS", help="Mission dataset to use")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--output", default=None, help="Output PNG path")
     args = ap.parse_args()
-    default_start, default_end = default_time_range("GNEISS", args.date)
+    args.mission = args.mission.upper()
+    if args.date is None:
+        args.date = default_date(args.mission)
+    default_start, default_end = default_time_range(args.mission, args.date)
     if args.start is None:
         args.start = default_start
     if args.end is None:
         args.end = default_end
+    if args.sites is None:
+        args.sites = default_sites(args.mission)
+    validate_color_and_sites(ap, args.mission, args.color, args.sites)
 
     try:
         parse_hhmmss_fractional(args.start)
@@ -144,7 +159,7 @@ def main():
         ap.error("--end must be >= --start")
 
     selected_sites = [s.upper() for s in args.sites]
-    skymaps = load_skymaps(set(selected_sites), color=args.color)
+    skymaps = load_skymaps(set(selected_sites), color=args.color, mission=args.mission)
     build_overlap_masks(skymaps)
     samplers = {site: build_site_sampler(skymaps, site) for site in selected_sites if site in skymaps}
 
@@ -152,17 +167,33 @@ def main():
     tiff_metadata = {}
     for site in ["ARV", "VEE", "BVR"]:
         if site in selected_sites:
-            candidates = get_site_tiff_candidates(site, args.date, args.color)
+            candidates = get_site_tiff_candidates(site, args.date, args.color, mission=args.mission)
             tiff_metadata[site] = build_tiff_metadata(candidates, frame_interval)
 
-    left_traj = build_traj_lookup(str(GNEISS_LEFT_TRAJECTORY_PATH), color=args.color)
-    right_traj = build_traj_lookup(str(GNEISS_RIGHT_TRAJECTORY_PATH), color=args.color)
-    left_lats, left_lons, left_flight_times = resample_traj_by_time(left_traj, args.samples)
-    right_lats, right_lons, right_flight_times = resample_traj_by_time(right_traj, args.samples)
+    traj_configs = trajectory_config_tuples(args.mission, date=args.date)
+    traj_data = []
+    for key, tag, label, path in traj_configs:
+        lookup = build_traj_lookup(str(path), color=args.color)
+        lats, lons, flight_times = resample_traj_by_time(lookup, args.samples)
+        launch_start = get_launch_start_from_traj_csv(str(path))
+        launch_dt = parse_date_and_time(args.date, launch_start) if launch_start else None
+        traj_data.append(
+            {
+                "key": key,
+                "tag": tag,
+                "label": label,
+                "path": path,
+                "lookup": lookup,
+                "lats": lats,
+                "lons": lons,
+                "flight_times": flight_times,
+                "launch_start": launch_start,
+                "launch_dt": launch_dt,
+                "cols": [],
+            }
+        )
 
     times = []
-    left_cols = []
-    right_cols = []
     step_td = dt.timedelta(seconds=args.step)
     t = start_dt
     frame_idx = 0
@@ -182,10 +213,9 @@ def main():
             except Exception as exc:
                 print(f"{time_arg} {site}: frame load failed: {exc}")
 
-        left_profile, _left_site = build_combined_profile(left_lats, left_lons, imgs_raw, samplers, selected_sites)
-        right_profile, _right_site = build_combined_profile(right_lats, right_lons, imgs_raw, samplers, selected_sites)
-        left_cols.append(left_profile)
-        right_cols.append(right_profile)
+        for traj in traj_data:
+            profile, _site = build_combined_profile(traj["lats"], traj["lons"], imgs_raw, samplers, selected_sites)
+            traj["cols"].append(profile)
         times.append(t)
 
         frame_idx += 1
@@ -193,9 +223,10 @@ def main():
             print(f"Processed {frame_idx} frames through {time_arg}")
         t += step_td
 
-    left_img = np.column_stack(left_cols)
-    right_img = np.column_stack(right_cols)
-    all_vals = np.concatenate([left_img[np.isfinite(left_img)], right_img[np.isfinite(right_img)]])
+    for traj in traj_data:
+        traj["img"] = np.column_stack(traj["cols"])
+    finite_arrays = [traj["img"][np.isfinite(traj["img"])] for traj in traj_data]
+    all_vals = np.concatenate(finite_arrays)
     if all_vals.size == 0:
         raise ValueError("No valid keogram brightness samples were found")
     pos_vals = all_vals[all_vals > 0]
@@ -206,38 +237,40 @@ def main():
         vmin = float(np.percentile(all_vals, 1))
         vmax = float(np.percentile(all_vals, 99))
 
-    output_path = build_output_path(args.output, args.date, args.start, args.end, args.color)
-    fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=True, constrained_layout=True)
-    left_launch_start = get_launch_start_from_traj_csv(str(GNEISS_LEFT_TRAJECTORY_PATH))
-    right_launch_start = get_launch_start_from_traj_csv(str(GNEISS_RIGHT_TRAJECTORY_PATH))
-    left_launch_dt = parse_date_and_time(args.date, left_launch_start)
-    right_launch_dt = parse_date_and_time(args.date, right_launch_start)
+    output_path = build_output_path(args.output, args.mission, args.date, args.start, args.end, args.color)
+    fig_height = 5 if len(traj_data) == 1 else 5 * len(traj_data)
+    fig, axes = plt.subplots(len(traj_data), 1, figsize=(14, fig_height), sharex=True, constrained_layout=True)
+    if len(traj_data) == 1:
+        axes = [axes]
     log_norm = mpl.colors.LogNorm(vmin=max(vmin, 1e-6), vmax=max(vmax, max(vmin, 1e-6) * 1.0001))
 
-    panels = [
-        (
-            axes[0],
-            left_img,
-            left_flight_times,
-            build_flight_time_line(times, left_launch_dt, left_traj),
-            compute_flight_time_bounds(start_dt, end_dt, left_launch_dt, left_traj),
-            "36.397 Trajectory Keogram",
-            left_launch_start,
-        ),
-        (
-            axes[1],
-            right_img,
-            right_flight_times,
-            build_flight_time_line(times, right_launch_dt, right_traj),
-            compute_flight_time_bounds(start_dt, end_dt, right_launch_dt, right_traj),
-            "36.398 Trajectory Keogram",
-            right_launch_start,
-        ),
-    ]
+    panels = []
+    for ax, traj in zip(axes, traj_data):
+        if traj["launch_dt"] is None:
+            line_y = np.full(len(times), np.nan, dtype=float)
+            y_bounds = (float(traj["flight_times"][0]), float(traj["flight_times"][-1]))
+        else:
+            line_y = build_flight_time_line(times, traj["launch_dt"], traj["lookup"])
+            y_bounds = compute_flight_time_bounds(start_dt, end_dt, traj["launch_dt"], traj["lookup"])
+        panels.append(
+            (
+                ax,
+                traj["img"],
+                traj["flight_times"],
+                line_y,
+                y_bounds,
+                f"{traj['label']} Trajectory Keogram",
+                traj["launch_start"],
+            )
+        )
     image_handle = None
     time_nums = mdates.date2num(times)
     x_min = mdates.date2num(start_dt)
     x_max = mdates.date2num(end_dt)
+    if x_min == x_max:
+        pad = max(args.step, 1.0) / 86400.0
+        x_min -= pad / 2.0
+        x_max += pad / 2.0
     for ax, img, flight_times, line_y, y_bounds, title, launch_start in panels:
         y_min, y_max = y_bounds
         start_idx = int(np.searchsorted(flight_times, y_min, side="left"))

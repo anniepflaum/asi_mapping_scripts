@@ -9,7 +9,7 @@ This workspace is used for:
 - sampling brightness along rocket trajectories
 - sampling brightness at receiver ionospheric pierce points
 - plotting brightness-vs-time products
-- building GNEISS trajectory keograms
+- building trajectory keograms
 
 ## Mission Support
 
@@ -95,8 +95,8 @@ combined range is used.
 | GNEISS 397 | `101900` | `102818` |
 | GNEISS 398 | `101930` | `102848` |
 | GNEISS combined products | `101900` | `102848` |
-| GIRAFF 381 (`20250202`) | `070729` | `071636` |
-| GIRAFF 380 (`20250209`) | `083520` | `084410` |
+| GIRAFF 381 (`20250202`) | `070715` | `071636` |
+| GIRAFF 380 (`20250209`) | `083501` | `084410` |
 
 ## Main Scripts
 
@@ -191,12 +191,11 @@ removed. Use `ipps_brightness_series.py` for receiver IPP brightness products.
 
 ### `ipps_brightness_series.py`
 
-Samples brightness at receiver IPPs for each mission trajectory. By default it
-plots from an existing CSV; pass `--csv` to generate a new CSV.
+Samples brightness at receiver IPPs for each mission trajectory. It generates a
+CSV and plot by default; pass `--no-csv` to plot from an existing CSV instead.
 
 ```bash
 python3 ipps_brightness_series.py \
-  --csv \
   --sites ARV BVR VEE PKR
 ```
 
@@ -204,7 +203,6 @@ GIRAFF 381 example:
 
 ```bash
 python3 ipps_brightness_series.py \
-  --csv \
   --mission GIRAFF \
   --date 20250202
 ```
@@ -220,11 +218,20 @@ For GIRAFF, receivers are filtered to `VEE`, `TOO`, and `PKR`.
 
 ### `trajectory_keogram.py`
 
-Builds GNEISS trajectory keograms along the 397 and 398 trajectories.
+Builds trajectory keograms. GNEISS produces two panels for rockets 397 and 398;
+GIRAFF produces one panel for rocket 381 or 380, selected by date.
 
 ```bash
 python3 trajectory_keogram.py \
   --sites ARV BVR VEE
+```
+
+GIRAFF 380 example:
+
+```bash
+python3 trajectory_keogram.py \
+  --mission GIRAFF \
+  --date 20250209
 ```
 
 ### `compare_faraday_ipp_series.py`
@@ -275,7 +282,8 @@ Outputs are written under color, mission, and for GIRAFF rocket directories:
 
 Examples:
 - mapped images: `GIRAFF_launch_green_VEE_20250209_083600.png`
-- map series folders: `GIRAFF_launch_green_VEE_20250209_083520_to_084410_step_10/`
-- trajectory brightness CSVs: `GIRAFF_brightness_vs_time_20250209_083520_084410_step0p05.csv`
-- IPP brightness CSVs: `GIRAFF_ipps_brightness_series_20250209_083520_084410_step0p05.csv`
+- map series folders: `GIRAFF_launch_green_VEE_20250209_083501_to_084410_step_10/`
+- trajectory brightness CSVs: `GIRAFF_brightness_vs_time_20250209_083501_084410_step0p05.csv`
+- IPP brightness CSVs: `GIRAFF_ipps_brightness_series_20250209_083501_084410_step0p05.csv`
+- GIRAFF keograms: `GIRAFF_trajectory_keogram_green_20250209_083501_084410.png`
 - GNEISS keograms: `trajectory_keogram_green_20260210_101900_102848.png`
