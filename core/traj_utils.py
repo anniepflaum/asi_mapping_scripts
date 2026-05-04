@@ -12,12 +12,14 @@ import numpy as np
 from apexpy import Apex
 
 from core.paths import (
-    GIRAFF_380_TRAJECTORY_PATH,
-    GIRAFF_381_TRAJECTORY_PATH,
     GNEISS_LEFT_TRAJECTORY_PATH,
     GNEISS_RIGHT_TRAJECTORY_PATH,
 )
-from core.missions import mission_trajectory_paths, trajectory_display_labels
+from core.missions import (
+    giraff_rocket_id_for_trajectory_path,
+    rocket_launch_datetime,
+    rocket_launch_start,
+)
 from core.time_utils import hhmmss_fractional_to_seconds
 
 
@@ -35,12 +37,6 @@ XLSX_LON_COLUMN = "Long"
 XLSX_ALT_COLUMN = "Alt"
 XLSX_GPS_MSEC_COLUMN = "GPS Time (mSec of week)"
 XLSX_GPS_WEEK_COLUMN = "GPS Week"
-GIRAFF_LAUNCH_DATETIMES_BY_TRAJECTORY = {
-    GIRAFF_381_TRAJECTORY_PATH.name: dt.datetime(2025, 2, 2, 7, 7, 15),
-    GIRAFF_380_TRAJECTORY_PATH.name: dt.datetime(2025, 2, 9, 8, 35, 1),
-}
-
-
 def mapped_apex_height(color="green"):
     """Return the target apex mapping height for a given ASI color."""
     return 200.0 if str(color).lower() == "red" else 110.0
@@ -142,8 +138,10 @@ def gps_msec_of_week_to_seconds_of_day(value):
 
 
 def giraff_launch_datetime_for_trajectory(filename):
-    path_name = Path(filename).name
-    return GIRAFF_LAUNCH_DATETIMES_BY_TRAJECTORY.get(path_name, dt.datetime(2025, 2, 2))
+    rocket = giraff_rocket_id_for_trajectory_path(filename)
+    if rocket is None:
+        raise ValueError(f"Could not infer GIRAFF rocket ID from trajectory path: {filename}")
+    return rocket_launch_datetime(rocket)
 
 
 def parse_giraff_sample_datetime(gps_msec_value, launch_datetime):
@@ -212,7 +210,11 @@ def load_traj_records_xlsx(filename):
 
 
 def get_launch_start_from_traj_csv(filename):
-    """Estimate T0 launch time from GPS UTC and official flight-time columns."""
+    """Return T0 launch time, using mission config for GIRAFF and trajectory data otherwise."""
+    rocket = giraff_rocket_id_for_trajectory_path(filename)
+    if rocket is not None:
+        return rocket_launch_start(rocket)
+
     utc_times, flight_times, _lats, _lons, _alts = load_traj_records(filename)
     launch_seconds = np.nanmedian(utc_times - flight_times)
     if not np.isfinite(launch_seconds) or launch_seconds < 0.0 or launch_seconds >= 86400.0:

@@ -15,11 +15,24 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
+from scipy.io import loadmat
 
-from core.missions import mission_output_dir
-from core.missions import default_time_range
+from core.missions import default_time_range, mission_output_dir, mission_trajectory_paths
 from core.time_utils import parse_date_and_time
-from core.traj_utils import get_launch_start_from_traj_csv, mission_trajectory_paths
+from core.traj_utils import get_launch_start_from_traj_csv
+
+
+APES_MINUTE_DIR = Path("/Users/anniepflaum/asi_mapping/apes_GIRAFF_plots/APES_GIR_1minplots")
+APES_MINUTE_ORIGINS = {
+    "380": 110.0,
+    "381": 127.0,
+}
+APES_MINUTE_AXIS = {
+    "axis_left_frac": 197 / 1600,
+    "axis_right_frac": 1369 / 1600,
+    "axis_top_frac": 60 / 800,
+    "axis_bottom_frac": 712 / 800,
+}
 
 
 APES_CONFIG = {
@@ -44,9 +57,56 @@ APES_CONFIG = {
 }
 
 
-def infer_rocket_from_path(path):
-    match = re.search(r"GIR(?:AFF)?[_-]?(\d{3})", str(path), re.IGNORECASE)
-    return match.group(1) if match else None
+def minute_window(rocket, minute):
+    minute_origin = APES_MINUTE_ORIGINS.get(str(rocket), 0.0)
+    x_min = minute_origin + (minute - 1) * 60.0
+    return x_min, x_min + 60.0
+
+
+def default_minute_fig_path(rocket, minute):
+    path = APES_MINUTE_DIR / f"APES_GIR{rocket}_min{minute}.fig"
+    if path.exists():
+        return path
+    if str(rocket) == "381" and minute == 2:
+        fallback = APES_MINUTE_DIR / "APES_GIR381_min2.fig"
+        if fallback.exists():
+            return fallback
+    return path
+
+
+def apes_xlim_from_fig(fig_path):
+    data = loadmat(fig_path, squeeze_me=True, struct_as_record=False)
+    roots = [value for key, value in data.items() if key.startswith("hgS_")]
+    if not roots:
+        raise ValueError(f"No MATLAB figure root found in {fig_path}")
+    children = np.asarray(roots[0].children, dtype=object).flat
+    for child in children:
+        if getattr(child, "type", None) == "axes":
+            xlim = np.asarray(child.properties.XLim, dtype=float)
+            if xlim.size == 2 and np.all(np.isfinite(xlim)):
+                return float(xlim[0]), float(xlim[1])
+    raise ValueError(f"No axes XLim found in {fig_path}")
+
+
+def minute_xlim(rocket, minute):
+    fig_path = default_minute_fig_path(rocket, minute)
+    if fig_path.exists():
+        try:
+            return apes_xlim_from_fig(fig_path)
+        except Exception as exc:
+            print(f"Warning: could not read APES x-limits from {fig_path}: {exc}")
+    return minute_window(rocket, minute)
+
+
+def default_minute_image_path(rocket, minute):
+    path = APES_MINUTE_DIR / f"APES_GIR{rocket}_min{minute}.jpg"
+    if path.exists():
+        return path
+    if str(rocket) == "381" and minute == 2:
+        fallback = APES_MINUTE_DIR / "APES_GIR391_min2.jpg"
+        if fallback.exists():
+            return fallback
+    return path
 
 
 def brightness_csv_candidates(rocket, date, color):
@@ -125,50 +185,25 @@ def default_output_path(image_path, rocket, date, color):
     return mission_output_dir("GIRAFF", color=color, date=date) / f"{stem}_traj_brightness.png"
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--rocket", choices=["380", "381"], default=None, help="GIRAFF rocket number")
-    ap.add_argument("--date", default=None, help="Date YYYYMMDD; defaults from rocket")
-    ap.add_argument("--image", default=None, help="APES overview JPEG path")
-    ap.add_argument("--brightness-csv", default=None, help="Trajectory brightness CSV path")
-    ap.add_argument("--color", choices=["green"], default="green", help="ASI color channel")
-    ap.add_argument("--output", default=None, help="Output PNG path")
-    ap.add_argument("--x-min", type=float, default=None, help="Left x-limit in seconds since T0")
-    ap.add_argument("--x-max", type=float, default=None, help="Right x-limit in seconds since T0")
-    ap.add_argument("--axis-left-frac", type=float, default=None, help="APES data-axis left edge as image-width fraction")
-    ap.add_argument("--axis-right-frac", type=float, default=None, help="APES data-axis right edge as image-width fraction")
-    ap.add_argument("--axis-top-frac", type=float, default=None, help="APES data-axis top edge as image-height fraction")
-    ap.add_argument("--axis-bottom-frac", type=float, default=None, help="APES data-axis bottom edge as image-height fraction")
-    args = ap.parse_args()
-
-    image_path = Path(args.image) if args.image else None
-    rocket = args.rocket or (infer_rocket_from_path(image_path) if image_path else None)
-    if rocket is None:
-        ap.error("--rocket is required when --image does not contain GIR380 or GIR381")
-    config = APES_CONFIG[rocket]
-    date = args.date or config["date"]
-    image_path = image_path or config["image"]
-    if not image_path.exists():
-        ap.error(f"APES image not found: {image_path}")
-
-    x_min, x_max = config["xlim"]
-    if args.x_min is not None:
-        x_min = args.x_min
-    if args.x_max is not None:
-        x_max = args.x_max
-    axis_left = config["axis_left_frac"] if args.axis_left_frac is None else args.axis_left_frac
-    axis_right = config["axis_right_frac"] if args.axis_right_frac is None else args.axis_right_frac
-    axis_top = config["axis_top_frac"] if args.axis_top_frac is None else args.axis_top_frac
-    axis_bottom = config["axis_bottom_frac"] if args.axis_bottom_frac is None else args.axis_bottom_frac
-    if not 0.0 <= axis_left < axis_right <= 1.0:
-        ap.error("--axis-left-frac and --axis-right-frac must satisfy 0 <= left < right <= 1")
-    if not 0.0 <= axis_top < axis_bottom <= 1.0:
-        ap.error("--axis-top-frac and --axis-bottom-frac must satisfy 0 <= top < bottom <= 1")
-
-    csv_path = Path(args.brightness_csv) if args.brightness_csv else find_brightness_csv(rocket, date, args.color)
-    times, brightness, value_field = load_brightness_series(csv_path)
-    t_since, launch_start = seconds_since_t0(times, date)
-
+def plot_brightness_with_apes(
+    image_path,
+    output_path,
+    rocket,
+    date,
+    color,
+    csv_path,
+    t_since,
+    brightness,
+    value_field,
+    launch_start,
+    x_min,
+    x_max,
+    axis_left,
+    axis_right,
+    axis_top,
+    axis_bottom,
+    title_suffix=None,
+):
     image = Image.open(image_path).convert("RGB")
     img_w, img_h = image.size
     panel_h = int(round(img_h * (axis_bottom - axis_top)))
@@ -186,9 +221,10 @@ def main():
     img_ax.axis("off")
 
     ax = fig.add_axes([axis_left, bottom_margin_px / total_h, axis_right - axis_left, panel_h / total_h])
-    ax.plot(t_since, brightness, color="#1b7837", linewidth=1.4)
+    in_window = (t_since >= x_min) & (t_since <= x_max)
+    ax.plot(t_since[in_window], brightness[in_window], color="#1b7837", linewidth=1.4)
     ax.set_xlim(x_min, x_max)
-    positive = brightness[np.isfinite(brightness) & (brightness > 0)]
+    positive = brightness[in_window & np.isfinite(brightness) & (brightness > 0)]
     if positive.size:
         ax.set_yscale("log")
         y_min = float(np.nanmin(positive))
@@ -201,14 +237,70 @@ def main():
         ax.set_ylabel("ASI brightness")
     ax.set_xlabel("Seconds since launch")
     ax.grid(True, alpha=0.25)
-    ax.set_title(f"GIRAFF/{rocket} trajectory brightness | T0 {launch_start}", fontsize=10)
+    title = f"GIRAFF/{rocket} trajectory brightness | T0 {launch_start}"
+    if title_suffix:
+        title += f" | {title_suffix}"
+    ax.set_title(title, fontsize=10)
 
-    output_path = Path(args.output) if args.output else default_output_path(image_path, rocket, date, args.color)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=dpi)
     plt.close(fig)
     print(f"Saved {output_path}")
     print(f"Brightness CSV: {csv_path}")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--rocket", choices=["380", "381"], required=True, help="GIRAFF rocket number")
+    ap.add_argument("--color", choices=["green"], default="green", help="ASI color channel")
+    ap.add_argument("--minute", type=int, nargs="+", default=None, help="APES 1-minute panel number(s) to compare")
+    args = ap.parse_args()
+    if args.minute is not None and any(minute < 1 for minute in args.minute):
+        ap.error("--minute values must be >= 1")
+
+    rocket = args.rocket
+    config = APES_CONFIG[rocket]
+    date = config["date"]
+
+    csv_path = find_brightness_csv(rocket, date, args.color)
+    times, brightness, value_field = load_brightness_series(csv_path)
+    t_since, launch_start = seconds_since_t0(times, date)
+
+    if args.minute is not None:
+        plot_specs = []
+        for minute in args.minute:
+            minute_image = default_minute_image_path(rocket, minute)
+            x_min, x_max = minute_xlim(rocket, minute)
+            plot_specs.append((minute_image, x_min, x_max, f"APES min {minute}", APES_MINUTE_AXIS))
+    else:
+        plot_specs = [(config["image"], config["xlim"][0], config["xlim"][1], None, config)]
+
+    for spec_image_path, x_min, x_max, title_suffix, axis_config in plot_specs:
+        if not spec_image_path.exists():
+            ap.error(f"APES image not found: {spec_image_path}")
+        if not np.any((t_since >= x_min) & (t_since <= x_max)):
+            print(f"{spec_image_path.name}: no brightness samples between {x_min:g} and {x_max:g} s, skipping")
+            continue
+        output_path = default_output_path(spec_image_path, rocket, date, args.color)
+        plot_brightness_with_apes(
+            spec_image_path,
+            output_path,
+            rocket,
+            date,
+            args.color,
+            csv_path,
+            t_since,
+            brightness,
+            value_field,
+            launch_start,
+            x_min,
+            x_max,
+            axis_config["axis_left_frac"],
+            axis_config["axis_right_frac"],
+            axis_config["axis_top_frac"],
+            axis_config["axis_bottom_frac"],
+            title_suffix=title_suffix,
+        )
 
 
 if __name__ == "__main__":

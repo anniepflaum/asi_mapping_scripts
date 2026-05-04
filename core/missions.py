@@ -1,5 +1,6 @@
 """Mission-specific configuration and small policy helpers."""
 
+import datetime as dt
 from dataclasses import dataclass
 
 from core.paths import (
@@ -22,6 +23,12 @@ ROCKET_TIME_WINDOWS = {
     "398": ("101930", "102848"),
     "381": ("070715", "071636"),
     "380": ("083501", "084410"),
+}
+ROCKET_DEFAULT_DATES = {
+    "397": GNEISS_DEFAULT_DATE,
+    "398": GNEISS_DEFAULT_DATE,
+    "381": "20250202",
+    "380": "20250209",
 }
 
 
@@ -60,6 +67,40 @@ def default_time_range(mission, date=None, rocket_tags=None):
         rocket_tags = [giraff_rocket_id_for_date(date)] if key == "GIRAFF" else ["397", "398"]
     windows = [ROCKET_TIME_WINDOWS[str(tag)] for tag in rocket_tags]
     return min(start for start, _end in windows), max(end for _start, end in windows)
+
+
+def rocket_launch_start(rocket_tag):
+    """Return mission-configured T0 as HHMMSS for a rocket."""
+    return ROCKET_TIME_WINDOWS[str(rocket_tag)][0]
+
+
+def rocket_default_date(rocket_tag):
+    """Return the default YYYYMMDD date for a rocket."""
+    return ROCKET_DEFAULT_DATES[str(rocket_tag)]
+
+
+def rocket_launch_datetime(rocket_tag):
+    """Return mission-configured T0 as a datetime for a rocket."""
+    date_key = rocket_default_date(rocket_tag)
+    launch_start = rocket_launch_start(rocket_tag)
+    return dt.datetime(
+        int(date_key[:4]),
+        int(date_key[4:6]),
+        int(date_key[6:8]),
+        int(launch_start[:2]),
+        int(launch_start[2:4]),
+        int(launch_start[4:6]),
+    )
+
+
+def giraff_rocket_id_for_trajectory_path(path):
+    """Return the GIRAFF rocket ID implied by a trajectory path, if known."""
+    path_name = getattr(path, "name", None) or str(path)
+    if path_name == GIRAFF_380_TRAJECTORY_PATH.name or "36380" in path_name:
+        return "380"
+    if path_name == GIRAFF_381_TRAJECTORY_PATH.name or "36381" in path_name:
+        return "381"
+    return None
 
 
 def validate_color_and_sites(parser, mission, color, sites, giraff_message_site="VEE"):
