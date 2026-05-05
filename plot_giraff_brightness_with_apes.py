@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot GIRAFF trajectory brightness below an APES overview image."""
+"""Overlay GIRAFF trajectory brightness on APES overview images."""
 
 import argparse
 import csv
@@ -38,7 +38,7 @@ APES_MINUTE_AXIS = {
 APES_CONFIG = {
     "380": {
         "date": "20250209",
-        "image": Path("/Users/anniepflaum/Downloads/APES_GIR380_ov_pad.jpg"),
+        "image": Path("/Users/anniepflaum/asi_mapping/apes_GIRAFF_plots/APES_GIR380_ov_pad.jpg"),
         "xlim": (100.0, 520.0),
         "axis_left_frac": 323 / 2596,
         "axis_right_frac": 2269 / 2596,
@@ -47,7 +47,7 @@ APES_CONFIG = {
     },
     "381": {
         "date": "20250202",
-        "image": Path("/Users/anniepflaum/Downloads/APES_GIR381_ov_pad.jpg"),
+        "image": Path("/Users/anniepflaum/asi_mapping/apes_GIRAFF_plots/APES_GIR381_ov_pad.jpg"),
         "xlim": (100.0, 520.0),
         "axis_left_frac": 323 / 2582,
         "axis_right_frac": 2248 / 2582,
@@ -206,23 +206,20 @@ def plot_brightness_with_apes(
 ):
     image = Image.open(image_path).convert("RGB")
     img_w, img_h = image.size
-    panel_h = int(round(img_h * (axis_bottom - axis_top)))
-    gap_px = 30
-    bottom_margin_px = 95
     dpi = 150
     fig_w = img_w / dpi
-    fig_h = (img_h + gap_px + panel_h + bottom_margin_px) / dpi
+    fig_h = img_h / dpi
     fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi)
 
-    total_h = img_h + gap_px + panel_h + bottom_margin_px
-    img_y = (bottom_margin_px + panel_h + gap_px) / total_h
-    img_ax = fig.add_axes([0.0, img_y, 1.0, img_h / total_h])
+    img_ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
     img_ax.imshow(image)
     img_ax.axis("off")
 
-    ax = fig.add_axes([axis_left, bottom_margin_px / total_h, axis_right - axis_left, panel_h / total_h])
+    ax = fig.add_axes([axis_left, 1.0 - axis_bottom, axis_right - axis_left, axis_bottom - axis_top])
+    ax.patch.set_alpha(0.0)
     in_window = (t_since >= x_min) & (t_since <= x_max)
-    ax.plot(t_since[in_window], brightness[in_window], color="#1b7837", linewidth=1.4)
+    line_color = "#f28e2b"
+    ax.plot(t_since[in_window], brightness[in_window], color=line_color, linewidth=2.0, label="ASI brightness")
     ax.set_xlim(x_min, x_max)
     positive = brightness[in_window & np.isfinite(brightness) & (brightness > 0)]
     if positive.size:
@@ -231,16 +228,18 @@ def plot_brightness_with_apes(
         y_max = float(np.nanmax(positive))
         if y_max > y_min:
             ax.set_ylim(y_min * 0.85, y_max * 1.15)
-    if value_field == "main_reference_norm_brightness":
-        ax.set_ylabel("ASI norm.")
-    else:
-        ax.set_ylabel("ASI brightness")
-    ax.set_xlabel("Seconds since launch")
-    ax.grid(True, alpha=0.25)
-    title = f"GIRAFF/{rocket} trajectory brightness | T0 {launch_start}"
-    if title_suffix:
-        title += f" | {title_suffix}"
-    ax.set_title(title, fontsize=10)
+    ax.tick_params(axis="x", bottom=False, labelbottom=False)
+    ax.tick_params(axis="y", colors=line_color, labelsize=8)
+    ax.yaxis.tick_right()
+    ax.yaxis.set_label_position("right")
+    ylabel = "ASI norm." if value_field == "main_reference_norm_brightness" else "ASI brightness"
+    ax.set_ylabel(ylabel, color=line_color, fontsize=9)
+    ax.spines["right"].set_color(line_color)
+    ax.spines["right"].set_linewidth(1.2)
+    ax.spines["left"].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+    ax.grid(False)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=dpi)

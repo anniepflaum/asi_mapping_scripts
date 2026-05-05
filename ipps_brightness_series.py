@@ -14,7 +14,6 @@ For each time step in a requested range, this script:
 import argparse
 import csv
 import datetime as dt
-import re
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -27,13 +26,22 @@ from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_
 from core.fetch_url import closest_amisr_png_url
 from core.masks import build_overlap_masks
 from core.remote_data import retrieve_image
+from core.series_utils import (
+    build_requested_iso_times,
+    count_steps,
+    find_reusable_csv,
+    format_time_arg,
+    load_rows_from_csv,
+    load_tiff_frame_with_metadata,
+    make_plot_output_path,
+    print_progress,
+)
 from core.skymaps import load_skymaps
 from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
 from core.missions import default_date, default_sites, default_time_range, mission_output_dir, trajectory_config_tuples, validate_color_and_sites
 from core.receivers import filter_receivers_for_mission, load_receivers
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, mapped_apex_height
-from traj_brightness_series import count_steps, format_time_arg, load_tiff_frame_with_metadata, print_progress
 
 
 def receiver_suffix(receivers, all_receivers):
@@ -55,100 +63,6 @@ def make_output_path(out_arg, mission, date, start, end, step, receivers, all_re
     end_tok = sanitize_time_for_filename(end)
     step_tok = str(step).replace(".", "p")
     return Path(f"{series_prefix(mission)}_{date}_{start_tok}_{end_tok}_step{step_tok}{receiver_suffix(receivers, all_receivers)}.csv")
-
-
-def make_plot_output_path(csv_path, output_arg):
-    if output_arg:
-        return Path(output_arg)
-    return Path(csv_path).with_suffix(".png")
-
-
-def parse_series_filename(csv_path, prefix):
-    pattern = rf"^{re.escape(prefix)}_(?:(\d{{8}})_)?(\d{{6}}(?:p\d+)?)_(\d{{6}}(?:p\d+)?)_step(\d+(?:p\d+)?)(?:_receivers_.+)?\.csv$"
-    match = re.match(pattern, csv_path.name)
-    if not match:
-        return None
-    date_tok, start_tok, end_tok, step_tok = match.groups()
-    return {
-        "date": date_tok,
-        "start_tok": start_tok,
-        "end_tok": end_tok,
-        "start_time": start_tok.replace("p", "."),
-        "end_time": end_tok.replace("p", "."),
-        "step": float(step_tok.replace("p", ".")),
-    }
-
-
-def build_requested_iso_times(date, start, end, step):
-    start_dt = parse_date_and_time(date, start)
-    end_dt = parse_date_and_time(date, end)
-    step_td = dt.timedelta(seconds=step)
-    requested = []
-    t = start_dt
-    while t <= end_dt:
-        requested.append(t.isoformat())
-        t += step_td
-    return requested
-
-
-def csv_contains_requested_times(csv_path, requested_times):
-    try:
-        with csv_path.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            available = {row["time"] for row in reader if row.get("time")}
-    except Exception:
-        return False
-    return all(time_value in available for time_value in requested_times)
-
-
-def find_reusable_csv(preferred_path, prefix, date, start, end, step, required_fields):
-    requested_times = build_requested_iso_times(date, start, end, step)
-    if preferred_path.exists() and csv_contains_requested_times(preferred_path, requested_times):
-        try:
-            load_rows_from_csv(preferred_path, required_fields)
-            return preferred_path
-        except Exception:
-            pass
-
-    request_start_dt = parse_date_and_time(date, start)
-    request_end_dt = parse_date_and_time(date, end)
-    candidates = []
-    for candidate in preferred_path.parent.glob(f"{prefix}_*.csv"):
-        parsed = parse_series_filename(candidate, prefix)
-        if parsed is None:
-            continue
-        if parsed.get("date") is not None and parsed["date"] != date:
-            continue
-        try:
-            candidate_start_dt = parse_date_and_time(date, parsed["start_time"])
-            candidate_end_dt = parse_date_and_time(date, parsed["end_time"])
-        except ValueError:
-            continue
-        if candidate_start_dt > request_start_dt or candidate_end_dt < request_end_dt:
-            continue
-        if csv_contains_requested_times(candidate, requested_times):
-            try:
-                load_rows_from_csv(candidate, required_fields)
-            except Exception:
-                continue
-            span_seconds = (candidate_end_dt - candidate_start_dt).total_seconds()
-            candidates.append((span_seconds, parsed["step"], candidate))
-    if not candidates:
-        return preferred_path
-    candidates.sort(key=lambda item: (item[0], item[1], item[2].name))
-    return candidates[0][2]
-
-
-def load_rows_from_csv(csv_path, required_fields):
-    if not csv_path.exists():
-        raise FileNotFoundError(f"CSV file not found: {csv_path}")
-    with csv_path.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        fieldnames = reader.fieldnames or []
-        missing = [field for field in required_fields if field not in fieldnames]
-        if missing:
-            raise ValueError(f"CSV file {csv_path} is missing required columns: {', '.join(missing)}")
-        return list(reader)
 
 
 def filter_receivers(receivers, requested_acronyms):
@@ -347,7 +261,16 @@ def main():
     if args.no_csv:
         if args.no_plot:
             ap.error("--no-csv cannot be combined with --no-plot")
-        csv_path = find_reusable_csv(out_path, series_prefix(args.mission), args.date, args.start, args.end, args.step, ["time", *fieldnames[1:]])
+        csv_path = find_reusable_csv(
+            out_path,
+            series_prefix(args.mission),
+            args.date,
+            args.start,
+            args.end,
+            args.step,
+            required_fields=["time", *fieldnames[1:]],
+            allow_receiver_suffix=True,
+        )
         rows = load_rows_from_csv(csv_path, ["time", *fieldnames[1:]])
         requested_times = set(build_requested_iso_times(args.date, args.start, args.end, args.step))
         rows = [row for row in rows if row.get("time") in requested_times]

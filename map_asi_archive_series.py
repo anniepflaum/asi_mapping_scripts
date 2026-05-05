@@ -4,7 +4,7 @@ Run map_asi_archive.py repeatedly over a requested time range.
 
 Example:
     python3 map_asi_archive_series.py \
-      --date 20260210 \
+      --rocket 397 \
       --step 10 \
       --sites ARV BVR VEE \
       --color green \
@@ -23,34 +23,13 @@ from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 
+from core.series_utils import count_steps, format_time_arg, print_progress
 from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
-from core.missions import default_date, default_sites, default_time_range, mission_output_dir, validate_color_and_sites
+from core.missions import default_sites, default_time_range, mission_output_dir, resolve_mission_and_date, validate_color_and_sites
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MAP_SCRIPT = SCRIPT_DIR / "map_asi_archive.py"
-
-
-def format_time_arg(t):
-    hhmmss = t.strftime("%H%M%S")
-    frac = f"{t.microsecond:06d}".rstrip("0")
-    return f"{hhmmss}.{frac}" if frac else hhmmss
-
-
-def count_steps(start_dt, end_dt, step_seconds):
-    total_seconds = max((end_dt - start_dt).total_seconds(), 0.0)
-    return int(total_seconds / step_seconds) + 1
-
-
-def print_progress(step_idx, total_steps, time_arg):
-    width = 30
-    filled = min(width, int(width * step_idx / max(total_steps, 1)))
-    bar = "#" * filled + "-" * (width - filled)
-    msg = f"\r[{bar}] {step_idx:>5}/{total_steps:<5} {time_arg}"
-    sys.stdout.write(msg)
-    sys.stdout.flush()
-    if step_idx >= total_steps:
-        sys.stdout.write("\n")
 
 
 def clear_progress_line():
@@ -68,8 +47,6 @@ def effective_sites(args):
         sites = [site.upper() for site in args.sites]
     else:
         sites = default_sites(args.mission)
-    if args.mission == "GIRAFF":
-        return ["VEE"]
     return sorted(sites)
 
 
@@ -104,8 +81,6 @@ def build_command(args, time_arg):
     cmd = [
         "python3",
         str(MAP_SCRIPT),
-        "--date",
-        args.date,
         "--time",
         time_arg,
         "--mission",
@@ -117,10 +92,12 @@ def build_command(args, time_arg):
         "--colorbar-scale",
         args.colorbar_scale,
     ]
+    if args.rocket is not None:
+        cmd.extend(["--rocket", args.rocket])
     if args.sites is not None:
         cmd.extend(["--sites", *args.sites])
-    if args.shared_norm:
-        cmd.append("--shared-norm")
+    if args.no_shared_norm:
+        cmd.append("--no-shared-norm")
     if args.bounds is not None:
         cmd.extend(["--bounds", *(str(v) for v in args.bounds)])
     if args.pretty:
@@ -136,12 +113,12 @@ def build_command(args, time_arg):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", default=None, help="Date YYYYMMDD")
+    ap.add_argument("--rocket", choices=["397", "398", "380", "381"], default=None, help="Rocket ID used to select the ASI image date")
     ap.add_argument("--start", default=None, help="Start time HHMMSS(.fraction); defaults to mission rocket window")
     ap.add_argument("--end", default=None, help="End time HHMMSS(.fraction); defaults to mission rocket window")
     ap.add_argument("--step", type=float, default=10.0, help="Cadence in seconds")
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to pass to map_asi_archive.py")
-    ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default="GNEISS", help="Mission dataset to use")
+    ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument(
         "--bounds",
@@ -154,29 +131,34 @@ def main():
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling")
     ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
     ap.add_argument(
-        "--shared-norm",
-        dest="shared_norm",
+        "--no-shared-norm",
+        dest="no_shared_norm",
         action="store_true",
-        default=True,
-        help="Enable cross-site shared brightness normalization in downstream map calls",
+        default=False,
+        help="Disable cross-site shared brightness normalization in downstream map calls",
     )
     ap.add_argument("--pretty", action="store_true", help="Use Cartopy plotting")
     ap.add_argument("--plot-receivers", action="store_true", help="Pass --plot-receivers through to map_asi_archive.py")
     ap.add_argument("--plot-ipps", action="store_true", help="Pass --plot-ipps through to map_asi_archive.py")
     ap.add_argument("--plot-geodetic-traj", action="store_true", help="Pass --plot-geodetic-traj through to map_asi_archive.py")
     args = ap.parse_args()
-    args.mission = args.mission.upper()
-    if args.date is None:
-        args.date = default_date(args.mission)
-    default_start, default_end = default_time_range(args.mission, args.date)
+    try:
+        args.mission, args.date = resolve_mission_and_date(args.mission, args.rocket)
+    except ValueError as exc:
+        ap.error(str(exc))
+    default_start, default_end = default_time_range(
+        args.mission,
+        args.date,
+        rocket_tags=[args.rocket] if args.rocket is not None else None,
+    )
     if args.start is None:
         args.start = default_start
     if args.end is None:
         args.end = default_end
     if args.sites is not None:
-        validate_color_and_sites(ap, args.mission, args.color, args.sites, giraff_message_site="VEE TIFFs")
+        validate_color_and_sites(ap, args.mission, args.color, args.sites, giraff_message_site="VEE TIFFs and PKR PNGs")
     else:
-        validate_color_and_sites(ap, args.mission, args.color, default_sites(args.mission), giraff_message_site="VEE TIFFs")
+        validate_color_and_sites(ap, args.mission, args.color, default_sites(args.mission), giraff_message_site="VEE TIFFs and PKR PNGs")
 
     try:
         parse_hhmmss_fractional(args.start)

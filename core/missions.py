@@ -15,7 +15,7 @@ from core.paths import (
 GNEISS_DEFAULT_DATE = "20260210"
 GIRAFF_DEFAULT_DATE = "20250202"
 GIRAFF_RECEIVER_ACRONYMS = ("VEE", "TOO", "PKR")
-GIRAFF_SITE_ACRONYMS = ("VEE",)
+GIRAFF_SITE_ACRONYMS = ("VEE", "PKR")
 GNEISS_TIFF_SITE_ACRONYMS = ("ARV", "VEE", "BVR")
 GNEISS_ALL_SITE_ACRONYMS = ("ARV", "BVR", "VEE", "PKR")
 ROCKET_TIME_WINDOWS = {
@@ -29,6 +29,10 @@ ROCKET_DEFAULT_DATES = {
     "398": GNEISS_DEFAULT_DATE,
     "381": "20250202",
     "380": "20250209",
+}
+MISSION_ROCKETS = {
+    "GNEISS": ("397", "398"),
+    "GIRAFF": ("380", "381"),
 }
 
 
@@ -52,6 +56,26 @@ def normalize_date_key(date=None):
 
 def default_date(mission):
     return GIRAFF_DEFAULT_DATE if mission_key(mission) == "GIRAFF" else GNEISS_DEFAULT_DATE
+
+
+def mission_for_rocket(rocket_tag):
+    rocket_tag = str(rocket_tag)
+    for mission, rockets in MISSION_ROCKETS.items():
+        if rocket_tag in rockets:
+            return mission
+    raise ValueError(f"Unsupported rocket: {rocket_tag}")
+
+
+def resolve_mission_and_date(mission=None, rocket_tag=None, default_mission="GNEISS"):
+    """Return a validated mission key and default date for a mission/rocket selection."""
+    if mission is None:
+        mission = mission_for_rocket(rocket_tag) if rocket_tag is not None else default_mission
+    key = mission_key(mission)
+    if rocket_tag is not None and str(rocket_tag) not in MISSION_ROCKETS.get(key, ()):
+        allowed = " or ".join(MISSION_ROCKETS.get(key, ()))
+        raise ValueError(f"--mission {key} only supports --rocket {allowed}")
+    date_key = rocket_default_date(rocket_tag) if rocket_tag is not None else default_date(key)
+    return key, date_key
 
 
 def default_sites(mission, include_pkr=False):
