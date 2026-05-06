@@ -4,8 +4,10 @@
 import numpy as np
 import pymap3d as pm
 
+from core.constants import DEFAULT_GREEN_ALT_KM
 
-def calc_ipp(site, rocket, rockcoords="geo", height=110.0):
+
+def calc_ipp(site, rocket, rockcoords="geo", height=DEFAULT_GREEN_ALT_KM):
     """
     Calculate the ionospheric pierce point for a receiver-rocket line of sight.
 

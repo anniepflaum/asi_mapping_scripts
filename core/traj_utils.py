@@ -15,6 +15,7 @@ from core.paths import (
     GNEISS_LEFT_TRAJECTORY_PATH,
     GNEISS_RIGHT_TRAJECTORY_PATH,
 )
+from core.constants import DEFAULT_GREEN_ALT_KM, DEFAULT_RED_ALT_KM
 from core.missions import (
     giraff_rocket_id_for_trajectory_path,
     rocket_launch_datetime,
@@ -37,9 +38,11 @@ XLSX_LON_COLUMN = "Long"
 XLSX_ALT_COLUMN = "Alt"
 XLSX_GPS_MSEC_COLUMN = "GPS Time (mSec of week)"
 XLSX_GPS_WEEK_COLUMN = "GPS Week"
-def mapped_apex_height(color="green"):
+def mapped_apex_height(color="green", green_alt=None):
     """Return the target apex mapping height for a given ASI color."""
-    return 200.0 if str(color).lower() == "red" else 110.0
+    if str(color).lower() == "red":
+        return DEFAULT_RED_ALT_KM
+    return float(green_alt) if green_alt is not None else DEFAULT_GREEN_ALT_KM
 
 
 def parse_gps_utc_time(value):
@@ -261,14 +264,14 @@ def trajectory_marker_second(filename):
     return 30.0
 
 
-def load_traj(filename, map_time=None, color="green"):
+def load_traj(filename, map_time=None, color="green", green_alt=None):
     """
     Load rocket trajectory from a GPS export file.
     Map lat/lon to the color-specific altitude and optionally return the nearest map-time point.
     """
     utc_times, flight_times, lats, lons, alts = load_traj_records(filename)
 
-    lats, lons, _ = apex.map_to_height(lats, lons, alts, mapped_apex_height(color))
+    lats, lons, _ = apex.map_to_height(lats, lons, alts, mapped_apex_height(color, green_alt=green_alt))
     idx = fixed_utc_minute_marker_indices(utc_times, second_of_minute=trajectory_marker_second(filename))
     latsm = lats[idx].squeeze()
     lonsm = lons[idx].squeeze()
@@ -294,9 +297,9 @@ def load_traj_times(filename):
     return flight_times
 
 
-def build_traj_lookup(traj_path, color="green"):
+def build_traj_lookup(traj_path, color="green", green_alt=None):
     """Load and cache one trajectory for repeated nearest-time lookup."""
-    lats, lons, _latm, _lonm, _lata, _lona, _lat_map, _lon_map = load_traj(traj_path, color=color)
+    lats, lons, _latm, _lonm, _lata, _lona, _lat_map, _lon_map = load_traj(traj_path, color=color, green_alt=green_alt)
     utc_times, flight_times, raw_lats, raw_lons, raw_alts = load_traj_records(traj_path)
     launch_start = get_launch_start_from_traj_csv(traj_path)
     return {

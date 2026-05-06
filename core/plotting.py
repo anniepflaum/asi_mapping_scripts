@@ -11,7 +11,7 @@ import numpy as np
 import magcoordmap as mcm
 from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
-from core.missions import mission_output_dir, mission_trajectory_paths, trajectory_display_labels
+from core.missions import mission_output_dir, trajectory_configs, trajectory_display_labels
 from core.paths import COAST_LAT_PATH, COAST_LON_PATH
 from core.plot_norm import choose_image_cmap, compute_linear_image_limits, compute_log_image_limits
 from core.receivers import filter_receivers_for_mission, load_receivers
@@ -55,9 +55,14 @@ def empty_geodetic_traj_context():
     return {"lat": None, "lon": None, "lat_minute": None, "lon_minute": None, "lat_map": None, "lon_map": None}
 
 
-def load_single_trajectory_context(traj_path, map_time, color, receivers, plot_ipps, rocket_label):
+def load_single_trajectory_context(traj_path, map_time, color, receivers, plot_ipps, rocket_label, green_alt=None):
     try:
-        lat, lon, latm, lonm, _lata, _lona, lat_map, lon_map = load_traj(str(traj_path), map_time=map_time, color=color)
+        lat, lon, latm, lonm, _lata, _lona, lat_map, lon_map = load_traj(
+            str(traj_path),
+            map_time=map_time,
+            color=color,
+            green_alt=green_alt,
+        )
     except FileNotFoundError:
         print_warning(f"{rocket_label} trajectory file not found: {traj_path}. Trajectory overlay will be skipped.")
         return empty_traj_context()
@@ -65,8 +70,8 @@ def load_single_trajectory_context(traj_path, map_time, color, receivers, plot_i
     ipps = []
     if plot_ipps:
         try:
-            rocket_geo = lookup_traj_geodetic_position(build_traj_lookup(str(traj_path), color=color), map_time)
-            ipps = compute_receiver_ipps(receivers, rocket_geo, mapped_apex_height(color))
+            rocket_geo = lookup_traj_geodetic_position(build_traj_lookup(str(traj_path), color=color, green_alt=green_alt), map_time)
+            ipps = compute_receiver_ipps(receivers, rocket_geo, mapped_apex_height(color, green_alt=green_alt))
         except FileNotFoundError:
             print_warning(f"{rocket_label} trajectory file not found while computing IPPs: {traj_path}. IPP overlay will be skipped.")
         except ValueError as exc:
@@ -130,7 +135,7 @@ def compute_receiver_ipps(receivers, rocket_geo, ipp_height_km):
         or rocket_geo[0] is None
         or rocket_geo[1] is None
         or rocket_geo[2] is None
-        or rocket_geo[2] < 110.0
+        or rocket_geo[2] < ipp_height_km
     ):
         return []
 
@@ -169,34 +174,36 @@ def build_time_label(args):
     date_str = args.date
     time_str = args.time
     mission = getattr(args, "mission", "GNEISS")
-    traj_paths = mission_trajectory_paths(mission, date=date_str)
-    labels = trajectory_display_labels(mission, date=date_str)
-    traj_key = next(iter(traj_paths))
-    tplus = format_time_since_launch(time_str, safe_launch_start_from_traj(traj_paths[traj_key], labels[traj_key]))
     tplus_parts = []
-    if tplus is not None:
-        tplus_parts.append(f"{labels[traj_key]} {tplus}")
+    for cfg in trajectory_configs(mission, date=date_str):
+        tplus = format_time_since_launch(time_str, safe_launch_start_from_traj(cfg.path, cfg.label))
+        if tplus is not None:
+            tplus_parts.append(f"{cfg.label} {tplus}")
     if not tplus_parts:
         return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}"
     return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}\n" + " | ".join(tplus_parts)
 
 
-def load_trajectory_context(map_time, color, receivers, plot_ipps, mission="GNEISS", date=None):
-    traj_paths = mission_trajectory_paths(mission, date=date)
-    labels = trajectory_display_labels(mission, date=date)
-    traj_key = next(iter(traj_paths))
+def load_trajectory_context(map_time, color, receivers, plot_ipps, mission="GNEISS", date=None, green_alt=None):
     return {
-        traj_key: load_single_trajectory_context(traj_paths[traj_key], map_time, color, receivers, plot_ipps, labels[traj_key]),
+        cfg.key: load_single_trajectory_context(
+            cfg.path,
+            map_time,
+            color,
+            receivers,
+            plot_ipps,
+            cfg.label,
+            green_alt=green_alt,
+        )
+        for cfg in trajectory_configs(mission, date=date)
     }
 
 
 
 def load_geodetic_trajectory_context(map_time, mission="GNEISS", date=None):
-    traj_paths = mission_trajectory_paths(mission, date=date)
-    labels = trajectory_display_labels(mission, date=date)
-    traj_key = next(iter(traj_paths))
     return {
-        traj_key: load_single_geodetic_trajectory_context(traj_paths[traj_key], map_time, labels[traj_key]),
+        cfg.key: load_single_geodetic_trajectory_context(cfg.path, map_time, cfg.label)
+        for cfg in trajectory_configs(mission, date=date)
     }
 
 
@@ -266,7 +273,7 @@ def setup_fast_axes(imgs, bounds):
     return fig, gs, ax, ax1, axtrans, axtrans1
 
 
-def setup_pretty_axes(imgs, bounds, apex):
+def setup_pretty_axes(imgs, bounds, apex, apex_height):
     proj = ccrs.AlbersEqualArea(central_longitude=-154, central_latitude=55, standard_parallels=(55, 65))
     fig = plt.figure(figsize=(15, 10))
     gs = gridspec.GridSpec(4, 4, width_ratios=[4, 0.2, 0.2, 1])
@@ -279,7 +286,7 @@ def setup_pretty_axes(imgs, bounds, apex):
     ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.8, zorder=2)
     ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.5, zorder=2)
     ax.gridlines()
-    mcm.maggridlines(ax, apex=apex, apex_height=110.0)
+    mcm.maggridlines(ax, apex=apex, apex_height=apex_height)
     ax1 = {}
     axtrans1 = {}
     for i, site in enumerate(imgs.keys()):
@@ -287,7 +294,7 @@ def setup_pretty_axes(imgs, bounds, apex):
         axtrans1[site] = ccrs.PlateCarree()
         ax1[site].coastlines()
         ax1[site].gridlines()
-        mcm.maggridlines(ax1[site], apex=apex, apex_height=110.0)
+        mcm.maggridlines(ax1[site], apex=apex, apex_height=apex_height)
         ax1[site].set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
         ax1[site].set_title(site)
     return fig, gs, ax, ax1, axtrans, axtrans1
@@ -313,43 +320,54 @@ def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, sh
 
 
 def draw_trajectory_and_ipps(ax, traj_ctx, axtrans, mission="GNEISS", date=None):
-    traj_key, traj = next(iter(traj_ctx.items()))
     labels = trajectory_display_labels(mission, date=date)
-    if traj["lat"] is not None and traj["lon"] is not None:
-        ax.plot(traj["lon"], traj["lat"], color="red", label=f"{mission} trajectory", zorder=7, transform=axtrans)
-    if traj["lat_minute"] is not None and traj["lon_minute"] is not None:
-        ax.scatter(traj["lon_minute"], traj["lat_minute"], color="red", s=15, zorder=7, transform=axtrans)
-    if traj["lat_map"] is not None and traj["lon_map"] is not None:
-        ax.scatter(traj["lon_map"], traj["lat_map"], color="orange", s=50, marker="o", zorder=8, label="Position at map time", transform=axtrans)
-    for ipps, ipp_color, text_dy, label in (
-        (traj["ipps"], "deepskyblue", 0.03, f"{labels[f'{traj_key}_tag']} IPP"),
-    ):
+    traj_colors = {"left": "tab:blue", "right": "tab:red", "main": "red"}
+    position_colors = {"left": "cyan", "right": "orange", "main": "orange"}
+    ipp_colors = {"left": "deepskyblue", "right": "magenta", "main": "deepskyblue"}
+    for traj_key, traj in traj_ctx.items():
+        traj_color = traj_colors.get(traj_key, "red")
+        position_color = position_colors.get(traj_key, "orange")
+        ipp_color = ipp_colors.get(traj_key, "deepskyblue")
+        traj_label = labels.get(traj_key, f"{mission} {traj_key}")
+        tag_label = labels.get(f"{traj_key}_tag", traj_label)
+        if traj["lat"] is not None and traj["lon"] is not None:
+            ax.plot(traj["lon"], traj["lat"], color=traj_color, label=f"{traj_label} trajectory", zorder=7, transform=axtrans)
+        if traj["lat_minute"] is not None and traj["lon_minute"] is not None:
+            ax.scatter(traj["lon_minute"], traj["lat_minute"], color=traj_color, s=15, zorder=7, transform=axtrans)
+        if traj["lat_map"] is not None and traj["lon_map"] is not None:
+            ax.scatter(traj["lon_map"], traj["lat_map"], color=position_color, s=50, marker="o", zorder=8, label=f"{traj_label} at map time", transform=axtrans)
+        ipps = traj["ipps"]
         if not ipps:
             continue
-        ax.scatter([ipp["lon"] for ipp in ipps], [ipp["lat"] for ipp in ipps], marker="x", s=45, color=ipp_color, linewidths=1.4, zorder=11, label=label, transform=axtrans)
+        ax.scatter([ipp["lon"] for ipp in ipps], [ipp["lat"] for ipp in ipps], marker="x", s=45, color=ipp_color, linewidths=1.4, zorder=11, label=f"{tag_label} IPP", transform=axtrans)
         for ipp in ipps:
-            ax.text(ipp["lon"] + 0.1, ipp["lat"] + text_dy, ipp["acronym"], fontsize=7, color=ipp_color, zorder=12, bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=0.12), transform=axtrans)
+            ax.text(ipp["lon"] + 0.1, ipp["lat"] + 0.03, ipp["acronym"], fontsize=7, color=ipp_color, zorder=12, bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=0.12), transform=axtrans)
 
 
 def draw_geodetic_trajectory(ax, geodetic_traj_ctx, axtrans, mission="GNEISS"):
-    _traj_key, traj = next(iter(geodetic_traj_ctx.items()))
-    if traj["lat"] is not None and traj["lon"] is not None:
-        ax.plot(traj["lon"], traj["lat"], color="blue", label=f"{mission} geodetic trajectory", transform=axtrans, zorder=6)
-    if traj["lat_minute"] is not None and traj["lon_minute"] is not None:
-        ax.scatter(traj["lon_minute"], traj["lat_minute"], color="blue", s=15, transform=axtrans, zorder=6)
-    if traj["lat_map"] is not None and traj["lon_map"] is not None:
-        ax.scatter(traj["lon_map"], traj["lat_map"], color="blue", s=40, marker="o", transform=axtrans, zorder=7)
+    colors = {"left": "tab:blue", "right": "tab:red", "main": "blue"}
+    labels = {"left": "36.397 geodetic trajectory", "right": "36.398 geodetic trajectory", "main": f"{mission} geodetic trajectory"}
+    for traj_key, traj in geodetic_traj_ctx.items():
+        color = colors.get(traj_key, "blue")
+        if traj["lat"] is not None and traj["lon"] is not None:
+            ax.plot(traj["lon"], traj["lat"], color=color, label=labels.get(traj_key, f"{mission} {traj_key} geodetic trajectory"), transform=axtrans, zorder=6)
+        if traj["lat_minute"] is not None and traj["lon_minute"] is not None:
+            ax.scatter(traj["lon_minute"], traj["lat_minute"], color=color, s=15, transform=axtrans, zorder=6)
+        if traj["lat_map"] is not None and traj["lon_map"] is not None:
+            ax.scatter(traj["lon_map"], traj["lat_map"], color=color, s=40, marker="o", transform=axtrans, zorder=7)
 
 
 def sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw):
-    bright = None
+    brightnesses = {}
     if imgs_raw is not None:
-        _traj_key, traj = next(iter(traj_ctx.items()))
-        if traj["lat_map"] is not None and traj["lon_map"] is not None:
+        for traj_key, traj in traj_ctx.items():
+            if traj["lat_map"] is None or traj["lon_map"] is None:
+                continue
             bright = best_rocket_brightness(traj["lat_map"], traj["lon_map"], skymaps, imgs_raw)
-        if bright is not None:
-            print(f"Rocket brightness percentile: {bright['site']} P={bright['percentile']:.1f} (nearest {bright['distance_deg']:.3f} deg)")
-    return bright
+            if bright is not None:
+                brightnesses[traj_key] = bright
+                print(f"{traj_key} rocket brightness percentile: {bright['site']} P={bright['percentile']:.1f} (nearest {bright['distance_deg']:.3f} deg)")
+    return brightnesses
 
 
 def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default_with_args, default_without_args, brightness_markers=None, shared_norm=True, mission="GNEISS"):
@@ -391,10 +409,10 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS"):
+def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", green_alt=None):
     receivers = filter_receivers_for_mission(load_receivers(warn=print_warning), mission) if (plot_receivers or plot_ipps) else []
     if pretty:
-        fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex)
+        fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex, mapped_apex_height(color, green_alt=green_alt))
     else:
         fig, gs, ax, ax1, axt, axt1 = setup_fast_axes(imgs, bounds)
     side_images, main_images, site_limits, site_norms, shared_vmin, shared_vmax, shared_image_norm = prepare_image_layers(
@@ -422,18 +440,18 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=Non
         axt,
         axt1,
     )
-    traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps, mission=mission, date=map_date)
+    traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps, mission=mission, date=map_date, green_alt=green_alt)
     draw_trajectory_and_ipps(ax, traj_ctx, axt, mission=mission, date=map_date)
     if plot_geodetic_traj:
         draw_geodetic_trajectory(ax, load_geodetic_trajectory_context(map_time, mission=mission, date=map_date), axt, mission=mission)
     if plot_receivers:
         draw_receivers(ax, receivers, axt)
-    bright = sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw)
+    brightnesses = sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw)
     brightness_markers = []
-    if bright is not None:
+    if brightnesses:
         marker_labels = trajectory_display_labels(mission, date=map_date)
-        traj_key = next(iter(traj_ctx))
-        brightness_markers.append((marker_labels[f"{traj_key}_tag"], bright))
+        for traj_key, bright in brightnesses.items():
+            brightness_markers.append((marker_labels.get(f"{traj_key}_tag", traj_key), bright))
     finalize_plot(
         ax,
         fig,

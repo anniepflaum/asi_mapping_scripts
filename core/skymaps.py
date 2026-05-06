@@ -1,7 +1,8 @@
 from core import generate_skymap as skymap
+from core.constants import DEFAULT_GREEN_ALT_KM, DEFAULT_RED_ALT_KM
 
 
-def load_skymaps(selected_sites=None, color="green", mission="GNEISS"):
+def load_skymaps(selected_sites=None, color="green", mission="GNEISS", green_alt=None):
     """
     Load latitude/longitude mapping arrays for each site using the skymap module.
     """
@@ -21,9 +22,10 @@ def load_skymaps(selected_sites=None, color="green", mission="GNEISS"):
                 "azmt": az,
                 "elev": el,
                 "mask": mask,
-                "lat": mapped_lat,
-                "lon": mapped_lon,
             }
+            if green_alt is None:
+                skymaps["VEE"]["lat"] = mapped_lat
+                skymaps["VEE"]["lon"] = mapped_lon
         else:
             lat, lon, az, el, mask = vee_payload
             skymaps["VEE"] = {"site_lat": lat, "site_lon": lon, "azmt": az, "elev": el, "mask": mask}
@@ -33,8 +35,9 @@ def load_skymaps(selected_sites=None, color="green", mission="GNEISS"):
     if "PKR" in selected_sites:
         lat, lon, az, el, mask = skymap.load_PKR()
         skymaps["PKR"] = {"site_lat": lat, "site_lon": lon, "azmt": az, "elev": el, "mask": mask}
-    map_alt_km = 200.0 if str(color).lower() == "red" else 110.0
+    map_alt_km = DEFAULT_RED_ALT_KM if str(color).lower() == "red" else (float(green_alt) if green_alt is not None else DEFAULT_GREEN_ALT_KM)
     for sm in skymaps.values():
+        sm["map_alt_km"] = map_alt_km
         if "lat" in sm and "lon" in sm:
             continue
         lat, lon = skymap.azel2geo(sm["site_lat"], sm["site_lon"], sm["azmt"], sm["elev"], alt=map_alt_km)

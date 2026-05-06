@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from core.brightness import best_rocket_brightness
-from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
+from core.constants import DEFAULT_GREEN_ALT_KM, FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
 from core.plot_norm import compute_reference_norm_limits, reference_normalization_time
 from core.remote_data import retrieve_image
@@ -36,7 +36,6 @@ from core.series_utils import (
     format_time_arg,
     load_rows_from_csv,
     load_tiff_frame_with_metadata,
-    make_plot_output_path,
     parse_frame_datetime_from_url,
     print_progress,
 )
@@ -47,7 +46,7 @@ from core.time_utils import (
     sanitize_time_for_filename,
 )
 from core.fetch_url import closest_amisr_png_url
-from core.missions import default_date, default_sites, default_time_range, mission_output_dir, trajectory_config_tuples, validate_color_and_sites
+from core.missions import default_sites, default_time_range, mission_output_dir, resolve_mission_and_date, trajectory_config_tuples, validate_color_and_sites
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import (
     build_traj_lookup,
@@ -60,35 +59,37 @@ def series_prefix(mission):
     return "brightness_vs_time" if str(mission).upper() == "GNEISS" else f"{str(mission).upper()}_brightness_vs_time"
 
 
-def make_output_path(out_arg, mission, date, start, end, step):
-    if out_arg:
-        return Path(out_arg)
+def format_alt_token(alt_km):
+    return str(float(alt_km)).replace(".", "p").rstrip("0").rstrip("p")
+
+
+def green_alt_suffix(color, green_alt):
+    if str(color).lower() != "green" or green_alt is None or float(green_alt) == DEFAULT_GREEN_ALT_KM:
+        return ""
+    return f"_alt_{format_alt_token(green_alt)}km"
+
+
+def make_output_path(mission, date, start, end, step, color="green", green_alt=None):
     start_tok = sanitize_time_for_filename(start)
     end_tok = sanitize_time_for_filename(end)
     step_tok = str(step).replace(".", "p")
-    return Path(f"{series_prefix(mission)}_{date}_{start_tok}_{end_tok}_step{step_tok}.csv")
+    return Path(f"{series_prefix(mission)}_{date}_{start_tok}_{end_tok}_step{step_tok}{green_alt_suffix(color, green_alt)}.csv")
 
 
-def plot_brightness_timeseries(times, series_by_key, output_path, title, site_changes_by_key=None, labels_by_key=None):
+def make_plot_output_path(csv_path):
+    return Path(csv_path).with_suffix(".png")
+
+
+def plot_brightness_timeseries(times, series_by_key, output_path, title, labels_by_key=None):
     if not times:
         raise ValueError("No rows with iso_time were collected")
     fig, ax = plt.subplots(figsize=(12, 5))
-    colors = {"left": "tab:red", "right": "tab:blue"}
+    colors = {"left": "tab:blue", "right": "tab:red"}
     labels_by_key = labels_by_key or {}
-    site_changes_by_key = site_changes_by_key or {}
     for key, values in series_by_key.items():
         label = labels_by_key.get(key, key)
         color = colors.get(key)
         ax.plot(times, values, linewidth=1.0, color=color, label=f"{label} brightness")
-        for idx, change_time in enumerate(site_changes_by_key.get(key, [])):
-            ax.axvline(
-                change_time,
-                color=color,
-                linestyle="--",
-                linewidth=1.0,
-                alpha=0.5,
-                label=f"{label} frame site change" if idx == 0 else None,
-            )
     ax.set_title(title)
     ax.set_xlabel("Time")
     ax.set_yscale("log")
@@ -105,26 +106,6 @@ def plot_brightness_timeseries(times, series_by_key, output_path, title, site_ch
     print(f"Saved plot to {output_path}")
 
 
-def get_site_change_times(rows, fieldname):
-    non_empty_sites = {row.get(fieldname) for row in rows if row.get(fieldname)}
-    if len(non_empty_sites) <= 1:
-        return []
-
-    change_times = []
-    previous_value = None
-    first_row = True
-    for row in rows:
-        current_value = row.get(fieldname, "")
-        if first_row:
-            previous_value = current_value
-            first_row = False
-            continue
-        if current_value != previous_value:
-            change_times.append(dt.datetime.fromisoformat(row["time"]))
-        previous_value = current_value
-    return change_times
-
-
 def normalize_reference_brightness(raw_brightness, norm_limits):
     if raw_brightness is None or norm_limits is None:
         return None
@@ -135,29 +116,32 @@ def normalize_reference_brightness(raw_brightness, norm_limits):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", default=None, help="Date YYYYMMDD")
+    ap.add_argument("--rocket", choices=["397", "398", "380", "381"], default=None, help="Rocket ID used to select the ASI image date")
     ap.add_argument("--start", default=None, help="Start time HHMMSS(.fraction); defaults to mission rocket window")
     ap.add_argument("--end", default=None, help="End time HHMMSS(.fraction); defaults to mission rocket window")
     ap.add_argument("--step", type=float, default=0.05, help="Step size in seconds")
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to include")
-    ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default="GNEISS", help="Mission dataset to use")
+    ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
-    ap.add_argument("--output", default=None, help="Output CSV path")
-    ap.add_argument("--plot-output", default=None, help="Optional output PNG path for the brightness plot")
-    ap.add_argument("--plot-title", default=None, help="Optional plot title")
+    ap.add_argument("--green-alt", type=float, default=None, help="Mapped altitude in km for green-channel skymaps and trajectories")
     ap.add_argument("--no-plot", action="store_true", help="Write the CSV only and skip the PNG plot")
     ap.add_argument("--no-csv", action="store_true", help="Skip CSV generation and plot from an existing CSV instead")
     args = ap.parse_args()
-    args.mission = args.mission.upper()
-    if args.date is None:
-        args.date = default_date(args.mission)
-    default_start, default_end = default_time_range(args.mission, args.date)
+    try:
+        args.mission, args.date = resolve_mission_and_date(args.mission, args.rocket)
+    except ValueError as exc:
+        ap.error(str(exc))
+    default_start, default_end = default_time_range(
+        args.mission,
+        args.date,
+        rocket_tags=[args.rocket] if args.rocket is not None else None,
+    )
     if args.start is None:
         args.start = default_start
     if args.end is None:
         args.end = default_end
     if args.sites is None:
-        args.sites = default_sites(args.mission, include_pkr=True)
+        args.sites = default_sites(args.mission)
     validate_color_and_sites(ap, args.mission, args.color, args.sites)
 
     try:
@@ -167,6 +151,8 @@ def main():
         ap.error(str(exc))
     if args.step <= 0:
         ap.error("--step must be > 0")
+    if args.green_alt is not None and args.green_alt <= 0:
+        ap.error("--green-alt must be > 0")
 
     start_dt = parse_date_and_time(args.date, args.start)
     end_dt = parse_date_and_time(args.date, args.end)
@@ -174,7 +160,7 @@ def main():
         ap.error("--end must be >= --start")
 
     selected_sites = set(s.upper() for s in args.sites)
-    skymaps = load_skymaps(selected_sites, color=args.color, mission=args.mission)
+    skymaps = load_skymaps(selected_sites, color=args.color, mission=args.mission, green_alt=args.green_alt)
 
     build_overlap_masks(skymaps)
 
@@ -191,13 +177,13 @@ def main():
 
     traj_configs = trajectory_config_tuples(args.mission, date=args.date)
     traj_lookups = {
-        key: build_traj_lookup(str(path), color=args.color)
+        key: build_traj_lookup(str(path), color=args.color, green_alt=args.green_alt)
         for key, _tag, _label, path in traj_configs
     }
     traj_tags = {key: tag for key, tag, _label, _path in traj_configs}
     traj_labels = {key: label for key, _tag, label, _path in traj_configs}
 
-    out_path = make_output_path(args.output, args.mission, args.date, args.start, args.end, args.step)
+    out_path = make_output_path(args.mission, args.date, args.start, args.end, args.step, color=args.color, green_alt=args.green_alt)
     if not out_path.is_absolute():
         out_path = mission_output_dir(args.mission, color=args.color, date=args.date) / out_path
 
@@ -224,15 +210,13 @@ def main():
             ]
             for key in traj_lookups
         }
-        site_changes = {key: get_site_change_times(rows, f"{key}_frame_site") for key in traj_lookups}
-        plot_output = make_plot_output_path(out_path, args.plot_output)
-        plot_title = args.plot_title or f"Brightness vs Time ({args.color})"
+        plot_output = make_plot_output_path(out_path)
+        plot_title = f"Brightness vs Time ({args.color})"
         plot_brightness_timeseries(
             plot_times,
             plot_series,
             plot_output,
             plot_title,
-            site_changes_by_key=site_changes,
             labels_by_key=traj_labels,
         )
         print(f"Plotted from existing CSV {csv_path}")
@@ -338,15 +322,13 @@ def main():
 
     print(f"Wrote {len(rows)} rows to {out_path}")
     if not args.no_plot:
-        site_changes = {key: get_site_change_times(rows, f"{key}_frame_site") for key in traj_lookups}
-        plot_output = make_plot_output_path(out_path, args.plot_output)
-        plot_title = args.plot_title or f"Brightness vs Time ({args.color})"
+        plot_output = make_plot_output_path(out_path)
+        plot_title = f"Brightness vs Time ({args.color})"
         plot_brightness_timeseries(
             plot_times,
             plot_series,
             plot_output,
             plot_title,
-            site_changes_by_key=site_changes,
             labels_by_key=traj_labels,
         )
 

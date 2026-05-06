@@ -6,6 +6,7 @@ import numpy as np
 import requests
 from PIL import Image
 from apexpy import Apex
+from core.constants import DEFAULT_GREEN_ALT_KM
 
 try:
     from resolvedvelocities.ResolveVectorsLat import ResolveVectorsLat
@@ -30,7 +31,7 @@ def retrieve_image(url):
     return img.astype(np.float32)
 
 
-def retrieve_pfisr(apex=None):
+def retrieve_pfisr(apex=None, map_alt_km=DEFAULT_GREEN_ALT_KM):
     """
     Download and process PFISR data.
     Returns electron density, velocity, and location arrays for plotting.
@@ -58,8 +59,8 @@ def retrieve_pfisr(apex=None):
     vvels.compute_vector_velocity()
     vvels.compute_electric_field()
     vvels.compute_geodetic_output()
-    glat, glon, _ = apex.map_to_height(glat, glon, galt / 1000.0, 110.0)
-    aidx = np.argmin(np.abs(vvels.outalt - 110.0))
+    glat, glon, _ = apex.map_to_height(glat, glon, galt / 1000.0, map_alt_km)
+    aidx = np.argmin(np.abs(vvels.outalt - map_alt_km))
     vv = vvels.Velocity_gd[0, aidx, :, :]
     vm = vvels.Vgd_mag[0, aidx, :]
     ve = vvels.Vgd_mag_err[0, aidx, :]

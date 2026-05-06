@@ -45,6 +45,7 @@ from core.time_utils import (
     sanitize_time_for_filename,
 )
 from core.tiff_utils import get_site_tiff_candidates, load_best_frame_from_tiffs
+from core.traj_utils import mapped_apex_height
 
 # Suppress runtime and user warnings
 import warnings
@@ -68,6 +69,7 @@ def main():
     ap.add_argument("--sites", nargs='*', default=None, help="List of sites to process (default: mission-specific sites)")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use for trajectories and mission-specific site assets")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel for TIFF lookup and frame timing")
+    ap.add_argument("--green-alt", type=float, default=None, help="Mapped altitude in km for green-channel skymaps and trajectories")
     ap.add_argument(
         "--bounds",
         nargs=4,
@@ -105,10 +107,12 @@ def main():
         lon_min, lon_max, lat_min, lat_max = args.bounds
         if lon_min >= lon_max or lat_min >= lat_max:
             ap.error("--bounds must satisfy LON_MIN < LON_MAX and LAT_MIN < LAT_MAX")
+    if args.green_alt is not None and args.green_alt <= 0:
+        ap.error("--green-alt must be > 0")
     # --- Load geographic mapping for each ASI site ---
     selected_sites = set([s.upper() for s in args.sites])
     validate_color_and_sites(ap, args.mission, args.color, selected_sites, giraff_message_site="VEE TIFFs and PKR PNGs")
-    skymaps = load_skymaps(selected_sites, color=args.color, mission=args.mission)
+    skymaps = load_skymaps(selected_sites, color=args.color, mission=args.mission, green_alt=args.green_alt)
 
     # --- Calculate masks for overlapping images between sites ---
     build_overlap_masks(skymaps)
@@ -125,7 +129,7 @@ def main():
     # --- Retrieve PFISR data for overlay ---
     pfisr = {}
     try:
-        pfisr = retrieve_pfisr(apex=apex)
+        pfisr = retrieve_pfisr(apex=apex, map_alt_km=mapped_apex_height(args.color, green_alt=args.green_alt))
     except Exception as e:
         if "resolvedvelocities module is not installed" not in str(e):
             print(f"Could not retrieve PFISR data: {e}")
@@ -199,6 +203,7 @@ def main():
         pretty=args.pretty,
         plot_geodetic_traj=args.plot_geodetic_traj,
         mission=args.mission,
+        green_alt=args.green_alt,
     )
 
     tocall = time.time()

@@ -6,8 +6,10 @@ from scipy.io import readsav
 import pymap3d as pm
 import h5py
 
+from core.constants import DEFAULT_GREEN_ALT_KM
 
-#def azel2geo(centlat, centlon, az, el, mapalt_km=110.):
+
+#def azel2geo(centlat, centlon, az, el, mapalt_km=DEFAULT_GREEN_ALT_KM):
 #    # Radius of earth at poker flat latitude
 #    # In the future, replace this with an ellipsoid formula
 #    # to find earth radius at any latitude
@@ -32,7 +34,7 @@ import h5py
 #
 #    return lat, lon
 
-def azel2geo(site_lat, site_lon, az, el, alt=110.):
+def azel2geo(site_lat, site_lon, az, el, alt=DEFAULT_GREEN_ALT_KM):
 
     # lat/lon array
     x, y, z = pm.geodetic2ecef(site_lat, site_lon, 0.)

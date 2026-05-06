@@ -6,10 +6,9 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from core.constants import DEFAULT_GREEN_ALT_KM
 
 RE = 6371.
-h1 = 110.
-h2 = 110.
 
 ## Load data files (just needed for example here)
 #filename1 = 'mango-mto-redline-level1-20251111.hdf5'
@@ -34,7 +33,7 @@ h2 = 110.
 #    m2 = h5['Mask'][:]
 
 
-def calculate_masks(sitelat1, sitelon1, az1, el1, sitelat2, sitelon2, az2, el2):
+def calculate_masks(sitelat1, sitelon1, az1, el1, sitelat2, sitelon2, az2, el2, h1=DEFAULT_GREEN_ALT_KM, h2=DEFAULT_GREEN_ALT_KM):
 
     # Convert site latitude and longitude to radians
     l1 = np.deg2rad(sitelat1)

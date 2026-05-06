@@ -1,7 +1,7 @@
 from core import check_intersect as ci
 
 
-def build_overlap_masks(skymaps):
+def build_overlap_masks(skymaps, map_alt_km=None):
     """
     For each site, compute masks that remove the pixels overlapping every other site.
     The masks are stored in-place under ``skymaps[site]["extra_masks"]``.
@@ -20,5 +20,7 @@ def build_overlap_masks(skymaps):
                 skymaps[other_site]["site_lon"],
                 skymaps[other_site]["azmt"],
                 skymaps[other_site]["elev"],
+                h1=map_alt_km or skymaps[site].get("map_alt_km"),
+                h2=map_alt_km or skymaps[other_site].get("map_alt_km"),
             )
             skymaps[site]["extra_masks"][other_site] = site_mask
