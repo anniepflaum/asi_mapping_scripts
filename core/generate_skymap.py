@@ -103,8 +103,8 @@ def load_VEE(mission="GNEISS"):
         with h5py.File('../starmaps/VEE/GIRAFF/sok_pixelcoords.h5', 'r') as fd:
             latmap = fd['Latitude'][()].copy()
             lonmap = fd['Longitude'][()].copy()
-            azmap = fd['Azimuth'][()].copy()
-            elmap = fd['Elevation'][()].copy()
+            azmap = np.rad2deg(fd['Azimuth'][()].copy())
+            elmap = np.rad2deg(fd['Elevation'][()].copy())
             mask = fd['Mask'][()].copy().astype(bool)
         return site_lat, site_lon, azmap, elmap, mask, latmap, lonmap
 

@@ -16,7 +16,7 @@ from core.paths import WORKSPACE_DIR
 
 GIRAFF_TIFF_PATH = Path("/Volumes/LynchK/GIRAFF/GIRAFF/SOK_250202_5577/ut06/SOK250202_06595930_16bit.tif")
 GIRAFF_LOG_PATH = Path("/Volumes/LynchK/GIRAFF/GIRAFF/SOK_250202_5577/ut06/SOK250202_06595930_16bit.log")
-GIRAFF_CACHE_DIR = WORKSPACE_DIR / "raw_tiffs" / "green" / "VEE" / "GIRAFF"
+GIRAFF_CACHE_DIR = WORKSPACE_DIR / "images" / "green" / "VEE" / "GIRAFF"
 GIRAFF_CACHE_NPY_PATH = GIRAFF_CACHE_DIR / "SOK250202_launch_070618_071637_uint16.npy"
 GIRAFF_CACHE_METADATA_PATH = GIRAFF_CACHE_DIR / "SOK250202_launch_070618_071637_metadata.json"
 GIRAFF_TIFF_PATHS_BY_DATE = {
@@ -236,8 +236,8 @@ def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission=
     Return candidate TIFF paths for a site.
     Priority:
     1) Explicit override directories if provided.
-    2) Auto-discovered TIFFs in ../raw_tiffs/<COLOR>/<SITE>/.
-       VEE green TIFFs may also live in ../raw_tiffs/<COLOR>/VEE/GNEISS/.
+    2) Auto-discovered TIFFs in ../images/<COLOR>/<SITE>/.
+       VEE green TIFFs may also live in ../images/<COLOR>/VEE/GNEISS/.
     """
     if isinstance(override_dirs, str):
         override_dirs = [override_dirs]
@@ -245,9 +245,9 @@ def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission=
         return get_giraff_tiff_candidates(date_str, override_dirs=override_dirs)
 
     site_prefixes = [site]
-    dirs_to_search = list(override_dirs) if override_dirs else [f"../raw_tiffs/{color}/{site}"]
+    dirs_to_search = list(override_dirs) if override_dirs else [f"../images/{color}/{site}"]
     if site == "VEE":
-        alt_dir = f"../raw_tiffs/{color}/VEE/{str(mission).upper()}"
+        alt_dir = f"../images/{color}/VEE/{str(mission).upper()}"
         if alt_dir not in dirs_to_search:
             dirs_to_search.append(alt_dir)
 

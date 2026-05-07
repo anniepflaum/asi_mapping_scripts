@@ -116,7 +116,11 @@ def brightness_csv_candidates(rocket, date, color):
 
 def parse_brightness_csv_name(path):
     match = re.match(
-        r"^GIRAFF_brightness_vs_time_(\d{8})_(\d{6}(?:p\d+)?)_(\d{6}(?:p\d+)?)_step",
+        r"^GIRAFF_brightness_vs_time_(\d{8})_"
+        r"(\d{6}(?:p\d+)?)_(\d{6}(?:p\d+)?)_"
+        r"step\d+(?:p\d+)?"
+        r"(?:_alt_(\d+(?:p\d+)?)km)?"
+        r"(?P<site_suffix>_sites_[A-Z0-9_]+)?\.csv$",
         path.name,
     )
     if not match:
@@ -125,6 +129,8 @@ def parse_brightness_csv_name(path):
         "date": match.group(1),
         "start": match.group(2).replace("p", "."),
         "end": match.group(3).replace("p", "."),
+        "alt": float(match.group(4).replace("p", ".")) if match.group(4) else 110.0,
+        "site_suffix": match.group("site_suffix") or "",
     }
 
 
@@ -142,10 +148,52 @@ def find_brightness_csv(rocket, date, color):
         if (parsed := parse_brightness_csv_name(candidate)) is not None
         and parsed["start"] == default_start
         and parsed["end"] == default_end
+        and parsed["alt"] == 110.0
+        and not parsed["site_suffix"]
     ]
     if exact:
         return max(exact, key=lambda path: path.stat().st_mtime)
+    exact_110 = [
+        candidate
+        for candidate in candidates
+        if (parsed := parse_brightness_csv_name(candidate)) is not None
+        and parsed["start"] == default_start
+        and parsed["end"] == default_end
+        and parsed["alt"] == 110.0
+    ]
+    if exact_110:
+        return max(exact_110, key=lambda path: path.stat().st_mtime)
     return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def find_all_alt_brightness_csvs(rocket, date, color):
+    default_start, default_end = default_time_range("GIRAFF", date)
+    by_alt = {}
+    for candidate in brightness_csv_candidates(rocket, date, color):
+        parsed = parse_brightness_csv_name(candidate)
+        if parsed is None or parsed["start"] != default_start or parsed["end"] != default_end:
+            continue
+        existing = by_alt.get(parsed["alt"])
+        prefer_candidate = existing is None
+        if existing is not None:
+            existing_parsed = parse_brightness_csv_name(existing)
+            existing_has_site_suffix = bool(existing_parsed and existing_parsed["site_suffix"])
+            candidate_has_site_suffix = bool(parsed["site_suffix"])
+            prefer_candidate = (
+                existing_has_site_suffix
+                and not candidate_has_site_suffix
+            ) or (
+                existing_has_site_suffix == candidate_has_site_suffix
+                and candidate.stat().st_mtime > existing.stat().st_mtime
+            )
+        if prefer_candidate:
+            by_alt[parsed["alt"]] = candidate
+    if not by_alt:
+        raise FileNotFoundError(
+            f"No GIRAFF trajectory brightness CSVs found for rocket {rocket} in "
+            f"{mission_output_dir('GIRAFF', color=color, date=date)}"
+        )
+    return sorted(by_alt.items(), key=lambda item: item[0])
 
 
 def load_brightness_series(csv_path):
@@ -185,16 +233,18 @@ def default_output_path(image_path, rocket, date, color):
     return mission_output_dir("GIRAFF", color=color, date=date) / f"{stem}_traj_brightness.png"
 
 
+def all_alt_output_path(image_path, rocket, date, color):
+    stem = Path(image_path).stem
+    return mission_output_dir("GIRAFF", color=color, date=date) / f"{stem}_traj_brightness_all_alts.png"
+
+
 def plot_brightness_with_apes(
     image_path,
     output_path,
     rocket,
     date,
     color,
-    csv_path,
-    t_since,
-    brightness,
-    value_field,
+    series,
     launch_start,
     x_min,
     x_max,
@@ -217,11 +267,20 @@ def plot_brightness_with_apes(
 
     ax = fig.add_axes([axis_left, 1.0 - axis_bottom, axis_right - axis_left, axis_bottom - axis_top])
     ax.patch.set_alpha(0.0)
-    in_window = (t_since >= x_min) & (t_since <= x_max)
-    line_color = "#f28e2b"
-    ax.plot(t_since[in_window], brightness[in_window], color=line_color, linewidth=2.0, label="ASI brightness")
+    colors = plt.get_cmap("tab10")
+    line_color = "#f28e2b" if len(series) == 1 else "black"
+    positive_values = []
+    value_fields = set()
+    for idx, item in enumerate(series):
+        t_since = item["t_since"]
+        brightness = item["brightness"]
+        in_window = (t_since >= x_min) & (t_since <= x_max)
+        color_value = "#f28e2b" if len(series) == 1 else colors(idx % 10)
+        ax.plot(t_since[in_window], brightness[in_window], color=color_value, linewidth=2.0, label=item["label"])
+        positive_values.append(brightness[in_window & np.isfinite(brightness) & (brightness > 0)])
+        value_fields.add(item["value_field"])
     ax.set_xlim(x_min, x_max)
-    positive = brightness[in_window & np.isfinite(brightness) & (brightness > 0)]
+    positive = np.concatenate([values for values in positive_values if values.size]) if any(values.size for values in positive_values) else np.array([])
     if positive.size:
         ax.set_yscale("log")
         y_min = float(np.nanmin(positive))
@@ -232,7 +291,7 @@ def plot_brightness_with_apes(
     ax.tick_params(axis="y", colors=line_color, labelsize=8)
     ax.yaxis.tick_right()
     ax.yaxis.set_label_position("right")
-    ylabel = "ASI norm." if value_field == "main_reference_norm_brightness" else "ASI brightness"
+    ylabel = "ASI norm." if value_fields == {"main_reference_norm_brightness"} else "ASI brightness"
     ax.set_ylabel(ylabel, color=line_color, fontsize=9)
     ax.spines["right"].set_color(line_color)
     ax.spines["right"].set_linewidth(1.2)
@@ -240,12 +299,15 @@ def plot_brightness_with_apes(
     ax.spines["top"].set_visible(False)
     ax.spines["bottom"].set_visible(False)
     ax.grid(False)
+    if len(series) > 1:
+        ax.legend(loc="upper left", fontsize=8, framealpha=0.7)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=dpi)
     plt.close(fig)
     print(f"Saved {output_path}")
-    print(f"Brightness CSV: {csv_path}")
+    for item in series:
+        print(f"{item['label']}: {item['csv_path']}")
 
 
 def main():
@@ -253,6 +315,7 @@ def main():
     ap.add_argument("--rocket", choices=["380", "381"], required=True, help="GIRAFF rocket number")
     ap.add_argument("--color", choices=["green"], default="green", help="ASI color channel")
     ap.add_argument("--minute", type=int, nargs="+", default=None, help="APES 1-minute panel number(s) to compare")
+    ap.add_argument("--all-alts", action="store_true", help="Overlay all available green-altitude brightness CSVs")
     args = ap.parse_args()
     if args.minute is not None and any(minute < 1 for minute in args.minute):
         ap.error("--minute values must be >= 1")
@@ -261,9 +324,26 @@ def main():
     config = APES_CONFIG[rocket]
     date = config["date"]
 
-    csv_path = find_brightness_csv(rocket, date, args.color)
-    times, brightness, value_field = load_brightness_series(csv_path)
-    t_since, launch_start = seconds_since_t0(times, date)
+    if args.all_alts:
+        csv_specs = [(alt, path) for alt, path in find_all_alt_brightness_csvs(rocket, date, args.color)]
+    else:
+        csv_specs = [(110.0, find_brightness_csv(rocket, date, args.color))]
+
+    series = []
+    launch_start = None
+    for alt, csv_path in csv_specs:
+        times, brightness, value_field = load_brightness_series(csv_path)
+        t_since, launch_start = seconds_since_t0(times, date)
+        alt_label = f"{alt:g} km" if args.all_alts else "ASI brightness"
+        series.append(
+            {
+                "label": alt_label,
+                "csv_path": csv_path,
+                "t_since": t_since,
+                "brightness": brightness,
+                "value_field": value_field,
+            }
+        )
 
     if args.minute is not None:
         plot_specs = []
@@ -277,20 +357,17 @@ def main():
     for spec_image_path, x_min, x_max, title_suffix, axis_config in plot_specs:
         if not spec_image_path.exists():
             ap.error(f"APES image not found: {spec_image_path}")
-        if not np.any((t_since >= x_min) & (t_since <= x_max)):
+        if not any(np.any((item["t_since"] >= x_min) & (item["t_since"] <= x_max)) for item in series):
             print(f"{spec_image_path.name}: no brightness samples between {x_min:g} and {x_max:g} s, skipping")
             continue
-        output_path = default_output_path(spec_image_path, rocket, date, args.color)
+        output_path = all_alt_output_path(spec_image_path, rocket, date, args.color) if args.all_alts else default_output_path(spec_image_path, rocket, date, args.color)
         plot_brightness_with_apes(
             spec_image_path,
             output_path,
             rocket,
             date,
             args.color,
-            csv_path,
-            t_since,
-            brightness,
-            value_field,
+            series,
             launch_start,
             x_min,
             x_max,

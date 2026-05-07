@@ -28,7 +28,7 @@ from core.brightness import best_rocket_brightness
 from core.constants import DEFAULT_GREEN_ALT_KM, FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
 from core.plot_norm import compute_reference_norm_limits, reference_normalization_time
-from core.remote_data import retrieve_image
+from core.remote_data import load_pkr_image
 from core.series_utils import (
     build_requested_iso_times,
     count_steps,
@@ -36,7 +36,6 @@ from core.series_utils import (
     format_time_arg,
     load_rows_from_csv,
     load_tiff_frame_with_metadata,
-    parse_frame_datetime_from_url,
     print_progress,
 )
 from core.skymaps import load_skymaps
@@ -45,7 +44,6 @@ from core.time_utils import (
     parse_hhmmss_fractional,
     sanitize_time_for_filename,
 )
-from core.fetch_url import closest_amisr_png_url
 from core.missions import default_sites, default_time_range, mission_output_dir, resolve_mission_and_date, trajectory_config_tuples, validate_color_and_sites
 from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import (
@@ -69,11 +67,35 @@ def green_alt_suffix(color, green_alt):
     return f"_alt_{format_alt_token(green_alt)}km"
 
 
-def make_output_path(mission, date, start, end, step, color="green", green_alt=None):
+def nondefault_site_suffix(mission, sites):
+    if not sites:
+        return ""
+    default_site_set = {site.upper() for site in default_sites(mission)}
+    extra_sites = sorted({site.upper() for site in sites} - default_site_set)
+    if not extra_sites:
+        return ""
+    return "_sites_" + "_".join(extra_sites)
+
+
+def effective_green_alt(green_alt):
+    return float(green_alt) if green_alt is not None else DEFAULT_GREEN_ALT_KM
+
+
+def brightness_plot_title(color, green_alt):
+    title = f"Brightness vs Time ({color})"
+    if str(color).lower() == "green":
+        title += f"\nAssumed green mapped altitude: {format_alt_token(effective_green_alt(green_alt))} km"
+    return title
+
+
+def make_output_path(mission, date, start, end, step, color="green", green_alt=None, sites=None):
     start_tok = sanitize_time_for_filename(start)
     end_tok = sanitize_time_for_filename(end)
     step_tok = str(step).replace(".", "p")
-    return Path(f"{series_prefix(mission)}_{date}_{start_tok}_{end_tok}_step{step_tok}{green_alt_suffix(color, green_alt)}.csv")
+    return Path(
+        f"{series_prefix(mission)}_{date}_{start_tok}_{end_tok}_step{step_tok}"
+        f"{green_alt_suffix(color, green_alt)}{nondefault_site_suffix(mission, sites)}.csv"
+    )
 
 
 def make_plot_output_path(csv_path):
@@ -89,7 +111,7 @@ def plot_brightness_timeseries(times, series_by_key, output_path, title, labels_
     for key, values in series_by_key.items():
         label = labels_by_key.get(key, key)
         color = colors.get(key)
-        ax.plot(times, values, linewidth=1.0, color=color, label=f"{label} brightness")
+        ax.plot(times, values, linewidth=1.4, color=color, label=f"{label} brightness")
     ax.set_title(title)
     ax.set_xlabel("Time")
     ax.set_yscale("log")
@@ -183,7 +205,7 @@ def main():
     traj_tags = {key: tag for key, tag, _label, _path in traj_configs}
     traj_labels = {key: label for key, _tag, label, _path in traj_configs}
 
-    out_path = make_output_path(args.mission, args.date, args.start, args.end, args.step, color=args.color, green_alt=args.green_alt)
+    out_path = make_output_path(args.mission, args.date, args.start, args.end, args.step, color=args.color, green_alt=args.green_alt, sites=args.sites)
     if not out_path.is_absolute():
         out_path = mission_output_dir(args.mission, color=args.color, date=args.date) / out_path
 
@@ -211,7 +233,7 @@ def main():
             for key in traj_lookups
         }
         plot_output = make_plot_output_path(out_path)
-        plot_title = f"Brightness vs Time ({args.color})"
+        plot_title = brightness_plot_title(args.color, args.green_alt)
         plot_brightness_timeseries(
             plot_times,
             plot_series,
@@ -283,9 +305,9 @@ def main():
         if "PKR" in selected_sites:
             try:
                 pkr_lookup_time = t.strftime("%H%M%S")
-                url_pkr = closest_amisr_png_url("PKR", args.date, pkr_lookup_time, color=args.color)
-                imgs_raw["PKR"] = retrieve_image(url_pkr)
-                frame_info["PKR"] = {"site": "PKR", "frame_time": parse_frame_datetime_from_url(url_pkr).isoformat()}
+                pkr_img, _pkr_source, pkr_frame_dt = load_pkr_image(args.date, pkr_lookup_time, color=args.color, verbose=False)
+                imgs_raw["PKR"] = pkr_img
+                frame_info["PKR"] = {"site": "PKR", "frame_time": pkr_frame_dt.isoformat()}
             except Exception as exc:
                 print(f"{time_arg} PKR: frame load failed: {exc}")
 
@@ -295,20 +317,22 @@ def main():
             lat, lon = lookup_traj_position(traj_lookup, time_arg)
             geo = lookup_traj_geodetic_position(traj_lookup, time_arg)
             sample = best_rocket_brightness(lat, lon, skymaps, imgs_raw) if lat is not None and lon is not None else None
+            outside_footprint = bool(sample and sample.get("outside_footprint", False))
             rocket_lat, rocket_lon, rocket_alt_km = geo
-            reference_norm_brightness = (
-                normalize_reference_brightness(sample["raw_brightness"], reference_norm_limits)
-                if sample
-                else None
-            )
+            if sample and not outside_footprint:
+                reference_norm_brightness = normalize_reference_brightness(sample["raw_brightness"], reference_norm_limits)
+            else:
+                reference_norm_brightness = None
             plot_series[key].append(reference_norm_brightness if reference_norm_brightness is not None else (sample["raw_brightness"] if sample else None))
-            row[f"{key}_frame_site"] = frame_info[sample["site"]]["site"] if sample and sample["site"] in frame_info else ""
-            row[f"{key}_frame_time"] = frame_info[sample["site"]]["frame_time"] if sample and sample["site"] in frame_info else ""
+            if outside_footprint:
+                plot_series[key][-1] = None
+            row[f"{key}_frame_site"] = frame_info[sample["site"]]["site"] if sample and not outside_footprint and sample["site"] in frame_info else ""
+            row[f"{key}_frame_time"] = frame_info[sample["site"]]["frame_time"] if sample and not outside_footprint and sample["site"] in frame_info else ""
             row[f"{key}_rocket_lat"] = f"{rocket_lat:.6f}" if rocket_lat is not None else ""
             row[f"{key}_rocket_lon"] = f"{rocket_lon:.6f}" if rocket_lon is not None else ""
             row[f"{key}_rocket_alt_km"] = f"{rocket_alt_km:.6f}" if rocket_alt_km is not None else ""
-            row[f"{key}_percentile"] = f"{sample['percentile']:.3f}" if sample else ""
-            row[f"{key}_brightness"] = f"{sample['raw_brightness']:.3f}" if sample else ""
+            row[f"{key}_percentile"] = f"{sample['percentile']:.3f}" if sample and not outside_footprint else ""
+            row[f"{key}_brightness"] = f"{sample['raw_brightness']:.3f}" if sample and not outside_footprint else ""
             if args.mission == "GIRAFF":
                 row[f"{key}_reference_norm_brightness"] = f"{reference_norm_brightness:.6f}" if reference_norm_brightness is not None else ""
         rows.append(row)
@@ -323,7 +347,7 @@ def main():
     print(f"Wrote {len(rows)} rows to {out_path}")
     if not args.no_plot:
         plot_output = make_plot_output_path(out_path)
-        plot_title = f"Brightness vs Time ({args.color})"
+        plot_title = brightness_plot_title(args.color, args.green_alt)
         plot_brightness_timeseries(
             plot_times,
             plot_series,

@@ -29,6 +29,9 @@ from core.traj_utils import (
 )
 
 
+LATLON_GRID_ZORDER = 30
+
+
 def scale_uv(lon, lat, u, v):
     """
     Adjust vector scaling/rotation for cartopy quiver plots to account for latitude distortion.
@@ -258,7 +261,8 @@ def setup_fast_axes(imgs, bounds):
     ax.set_ylim(ymin=lat_min, ymax=lat_max)
     ax.set_xlim(xmin=lon_min, xmax=lon_max)
     ax.set_aspect(2.2)
-    ax.grid()
+    ax.set_axisbelow(False)
+    ax.grid(True, color="0.35", alpha=0.55, linewidth=0.8, zorder=LATLON_GRID_ZORDER)
     ax1 = {}
     axtrans1 = {}
     for i, site in enumerate(imgs.keys()):
@@ -268,7 +272,8 @@ def setup_fast_axes(imgs, bounds):
         ax1[site].set_ylim(ymin=lat_min, ymax=lat_max)
         ax1[site].set_xlim(xmin=lon_min, xmax=lon_max)
         ax1[site].set_aspect(2.2)
-        ax1[site].grid()
+        ax1[site].set_axisbelow(False)
+        ax1[site].grid(True, color="0.35", alpha=0.55, linewidth=0.8, zorder=LATLON_GRID_ZORDER)
         ax1[site].set_title(site)
     return fig, gs, ax, ax1, axtrans, axtrans1
 
@@ -285,7 +290,7 @@ def setup_pretty_axes(imgs, bounds, apex, apex_height):
     ax.add_feature(cfeature.OCEAN.with_scale("50m"), zorder=0)
     ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.8, zorder=2)
     ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.5, zorder=2)
-    ax.gridlines()
+    ax.gridlines(color="0.25", alpha=0.65, linewidth=0.8, zorder=LATLON_GRID_ZORDER)
     mcm.maggridlines(ax, apex=apex, apex_height=apex_height)
     ax1 = {}
     axtrans1 = {}
@@ -293,7 +298,7 @@ def setup_pretty_axes(imgs, bounds, apex, apex_height):
         ax1[site] = fig.add_subplot(gs[i, -1], projection=proj)
         axtrans1[site] = ccrs.PlateCarree()
         ax1[site].coastlines()
-        ax1[site].gridlines()
+        ax1[site].gridlines(color="0.25", alpha=0.65, linewidth=0.8, zorder=LATLON_GRID_ZORDER)
         mcm.maggridlines(ax1[site], apex=apex, apex_height=apex_height)
         ax1[site].set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
         ax1[site].set_title(site)

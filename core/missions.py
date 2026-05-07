@@ -15,6 +15,7 @@ from core.paths import (
 GNEISS_DEFAULT_DATE = "20260210"
 GIRAFF_DEFAULT_DATE = "20250202"
 GIRAFF_RECEIVER_ACRONYMS = ("VEE", "TOO", "PKR")
+GIRAFF_DEFAULT_SITE_ACRONYMS = ("VEE",)
 GIRAFF_SITE_ACRONYMS = ("VEE", "PKR")
 GNEISS_TIFF_SITE_ACRONYMS = ("ARV", "VEE", "BVR")
 GNEISS_ALL_SITE_ACRONYMS = ("ARV", "BVR", "VEE", "PKR")
@@ -80,7 +81,7 @@ def resolve_mission_and_date(mission=None, rocket_tag=None, default_mission="GNE
 
 def default_sites(mission, include_pkr=False):
     if mission_key(mission) == "GIRAFF":
-        return list(GIRAFF_SITE_ACRONYMS)
+        return list(GIRAFF_SITE_ACRONYMS if include_pkr else GIRAFF_DEFAULT_SITE_ACRONYMS)
     return list(GNEISS_ALL_SITE_ACRONYMS if include_pkr else GNEISS_TIFF_SITE_ACRONYMS)
 
 

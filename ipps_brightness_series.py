@@ -23,9 +23,8 @@ import numpy as np
 from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
-from core.fetch_url import closest_amisr_png_url
 from core.masks import build_overlap_masks
-from core.remote_data import retrieve_image
+from core.remote_data import load_pkr_image
 from core.series_utils import (
     build_requested_iso_times,
     count_steps,
@@ -315,8 +314,8 @@ def main():
         if "PKR" in selected_sites:
             try:
                 pkr_lookup_time = t.strftime("%H%M%S")
-                url_pkr = closest_amisr_png_url("PKR", args.date, pkr_lookup_time, color=args.color)
-                imgs_raw["PKR"] = retrieve_image(url_pkr)
+                pkr_img, _pkr_source, _pkr_frame_dt = load_pkr_image(args.date, pkr_lookup_time, color=args.color, verbose=False)
+                imgs_raw["PKR"] = pkr_img
             except Exception as exc:
                 print(f"{time_arg} PKR: frame load failed: {exc}")
 

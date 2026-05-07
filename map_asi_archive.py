@@ -8,7 +8,7 @@ Selects frames by timestamp, normalizes intensities, overlays rocket trajectorie
 
 
 Usage:
-    python map_asi_archive_3Hz.py --time HHMMSS.s --sites ARV BVR VEE PKR
+    python map_asi_archive.py --time HHMMSS.s --sites ARV BVR VEE PKR
 
 Arguments:
     --rocket         Rocket ID used to select the ASI image date
@@ -32,11 +32,10 @@ import matplotlib
 matplotlib.use("Agg")
 
 from core.masks import build_overlap_masks
-from core.fetch_url import closest_amisr_png_url
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.plot_norm import compute_reference_norm_limits, reference_normalization_time
 from core.plotting import plot_map
-from core.remote_data import retrieve_image, retrieve_pfisr
+from core.remote_data import load_pkr_image, retrieve_pfisr
 from core.skymaps import load_skymaps
 from core.missions import default_sites, mission_output_dir, resolve_mission_and_date, validate_color_and_sites
 from core.time_utils import (
@@ -166,16 +165,15 @@ def main():
             imgs[site] = im_raw
         except Exception as e:
             print(f"Could not load {site} TIFF image: {e}")
-    # --- Process PKR site: fetch image from web and store ---
+    # --- Process PKR site: prefer local PNGs and fall back to archive URL ---
     if 'PKR' in selected_sites:
         try:
             pkr_lookup_time = target_dt.strftime("%H%M%S")
-            url_pkr = closest_amisr_png_url('PKR', date, pkr_lookup_time, color=args.color)
-            pkr_img = retrieve_image(url_pkr)
+            pkr_img, _pkr_source, _pkr_frame_dt = load_pkr_image(date, pkr_lookup_time, color=args.color)
             imgs_raw['PKR'] = pkr_img
             imgs['PKR'] = pkr_img
         except Exception as e:
-            print(f"Could not fetch PKR image: {e}")
+            print(f"Could not load PKR image: {e}")
 
     # --- Compose output path for mapped image, include plotting mode ---
     sites_str = '_'.join(sorted(selected_sites))

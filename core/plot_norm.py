@@ -1,9 +1,8 @@
 import numpy as np
 
 from core.constants import NORMALIZATION_LOWER_PERCENTILE, NORMALIZATION_UPPER_PERCENTILE, REFERENCE_NORMALIZATION_TIME
-from core.remote_data import retrieve_image
+from core.remote_data import load_pkr_image
 from core.time_utils import parse_date_and_time
-from core.fetch_url import closest_amisr_png_url
 from core.tiff_utils import get_site_tiff_candidates, load_best_frame_from_tiffs
 
 
@@ -83,8 +82,7 @@ def compute_reference_norm_limits(skymaps, selected_sites, date, ref_time_str, c
     if "PKR" in selected_sites:
         try:
             pkr_lookup_time = ref_dt.strftime("%H%M%S")
-            url_pkr = closest_amisr_png_url("PKR", date, pkr_lookup_time, color=color)
-            ref_imgs["PKR"] = retrieve_image(url_pkr)
+            ref_imgs["PKR"], _pkr_source, _pkr_frame_dt = load_pkr_image(date, pkr_lookup_time, color=color)
         except Exception as exc:
             print(f"PKR: reference normalization frame unavailable at {ref_time_str}: {exc}")
 

@@ -56,7 +56,7 @@ scripts/
     36381_MAIN_PAYLOAD_GPS.xlsx
 
 ../mapped/
-../raw_tiffs/
+../images/
 ../receivers.csv
 ../starmaps/
 ```
@@ -253,7 +253,7 @@ Expected workspace inputs:
 - `../trajectories/GIRAFF/36381_MAIN_PAYLOAD_GPS.xlsx`
 - `../receivers.csv`
 - `../starmaps/...`
-- local TIFF archives under `../raw_tiffs/...` or the hard-coded GIRAFF source/cache paths in `core/tiff_utils.py`
+- local TIFF archives under `../images/...` or the hard-coded GIRAFF source/cache paths in `core/tiff_utils.py`
 - coastline assets under `coast/`
 
 PFISR retrieval is optional. If PFISR download or the `resolvedvelocities`
