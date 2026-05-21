@@ -202,7 +202,15 @@ def load_brightness_series(csv_path):
     with Path(csv_path).open("r", encoding="utf-8", newline="") as fd:
         reader = csv.DictReader(fd)
         fieldnames = reader.fieldnames or []
-        value_field = "main_reference_norm_brightness" if "main_reference_norm_brightness" in fieldnames else "main_brightness"
+        if "main_reference_norm_brightness" in fieldnames:
+            value_field = "main_reference_norm_brightness"
+        elif "main_brightness" in fieldnames:
+            value_field = "main_brightness"
+        else:
+            candidates = [field for field in fieldnames if field.endswith("_reference_norm_brightness")]
+            if not candidates:
+                candidates = [field for field in fieldnames if field.endswith("_brightness")]
+            value_field = candidates[0] if candidates else ""
         if value_field not in fieldnames:
             raise ValueError(f"{csv_path} is missing main brightness columns")
         for row in reader:

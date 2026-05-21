@@ -11,6 +11,7 @@ import numpy as np
 import magcoordmap as mcm
 from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
+from core.constants import NORMALIZATION_UPPER_PERCENTILE
 from core.missions import mission_output_dir, trajectory_configs, trajectory_display_labels
 from core.paths import COAST_LAT_PATH, COAST_LON_PATH
 from core.plot_norm import choose_image_cmap, compute_linear_image_limits, compute_log_image_limits
@@ -210,7 +211,7 @@ def load_geodetic_trajectory_context(map_time, mission="GNEISS", date=None):
     }
 
 
-def prepare_image_layers(skymaps, imgs, colorbar_scale, norm_limits=None, shared_norm=True):
+def prepare_image_layers(skymaps, imgs, colorbar_scale, norm_limits=None, shared_norm=True, upper_percentile=NORMALIZATION_UPPER_PERCENTILE):
     side_images = {}
     main_images = {}
     norm_pool = []
@@ -230,18 +231,18 @@ def prepare_image_layers(skymaps, imgs, colorbar_scale, norm_limits=None, shared
         if vals.size > 0:
             norm_pool.append(vals)
         if colorbar_scale == "log":
-            site_vmin, site_vmax = compute_log_image_limits([vals]) if vals.size > 0 else (None, None)
+            site_vmin, site_vmax = compute_log_image_limits([vals], upper_percentile=upper_percentile) if vals.size > 0 else (None, None)
         else:
-            site_vmin, site_vmax = compute_linear_image_limits([vals]) if vals.size > 0 else (None, None)
+            site_vmin, site_vmax = compute_linear_image_limits([vals], upper_percentile=upper_percentile) if vals.size > 0 else (None, None)
         site_limits[site] = (site_vmin, site_vmax)
         site_norms[site] = mpl.colors.LogNorm(vmin=site_vmin, vmax=site_vmax) if colorbar_scale == "log" and site_vmin is not None and site_vmax is not None else None
 
     if shared_norm and norm_limits is not None and norm_limits[0] is not None and norm_limits[1] is not None:
         shared_vmin, shared_vmax = norm_limits
     elif shared_norm and colorbar_scale == "log":
-        shared_vmin, shared_vmax = compute_log_image_limits(norm_pool)
+        shared_vmin, shared_vmax = compute_log_image_limits(norm_pool, upper_percentile=upper_percentile)
     elif shared_norm:
-        shared_vmin, shared_vmax = compute_linear_image_limits(norm_pool)
+        shared_vmin, shared_vmax = compute_linear_image_limits(norm_pool, upper_percentile=upper_percentile)
     else:
         shared_vmin, shared_vmax = None, None
     shared_image_norm = mpl.colors.LogNorm(vmin=shared_vmin, vmax=shared_vmax) if shared_norm and colorbar_scale == "log" and shared_vmin is not None and shared_vmax is not None else None
@@ -414,7 +415,7 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", green_alt=None):
+def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", green_alt=None, upper_percentile=NORMALIZATION_UPPER_PERCENTILE):
     receivers = filter_receivers_for_mission(load_receivers(warn=print_warning), mission) if (plot_receivers or plot_ipps) else []
     if pretty:
         fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex, mapped_apex_height(color, green_alt=green_alt))
@@ -426,6 +427,7 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=Non
         colorbar_scale,
         norm_limits=norm_limits,
         shared_norm=shared_norm,
+        upper_percentile=upper_percentile,
     )
     image_cmap = choose_image_cmap(colorbar_color, color)
     im_handle = draw_images(

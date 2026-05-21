@@ -37,8 +37,12 @@ def load_series(csv_path, value_column=VALUE_COLUMN):
     values = []
     with Path(csv_path).open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
-        if value_column not in (reader.fieldnames or []):
-            raise KeyError(f"{csv_path} missing {value_column}")
+        fieldnames = reader.fieldnames or []
+        if value_column not in fieldnames:
+            candidates = [field for field in fieldnames if field.endswith("_reference_norm_brightness")]
+            if not candidates:
+                raise KeyError(f"{csv_path} missing {value_column}")
+            value_column = candidates[0]
         for row in reader:
             value = row.get(value_column, "")
             if not row.get("time") or not value:

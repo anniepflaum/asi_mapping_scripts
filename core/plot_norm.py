@@ -6,7 +6,7 @@ from core.time_utils import parse_date_and_time
 from core.tiff_utils import get_site_tiff_candidates, load_best_frame_from_tiffs
 
 
-def compute_linear_image_limits(norm_pool):
+def compute_linear_image_limits(norm_pool, upper_percentile=NORMALIZATION_UPPER_PERCENTILE):
     """Return finite vmin/vmax limits suitable for linear image plotting."""
     if not norm_pool:
         return None, None
@@ -15,7 +15,7 @@ def compute_linear_image_limits(norm_pool):
     if finite_vals.size == 0:
         return None, None
     vmin = float(np.percentile(finite_vals, NORMALIZATION_LOWER_PERCENTILE))
-    vmax = float(np.percentile(finite_vals, NORMALIZATION_UPPER_PERCENTILE))
+    vmax = float(np.percentile(finite_vals, upper_percentile))
     if not np.isfinite(vmin):
         vmin = float(np.nanmin(finite_vals))
     if not np.isfinite(vmax) or vmax <= vmin:
@@ -23,7 +23,7 @@ def compute_linear_image_limits(norm_pool):
     return vmin, vmax
 
 
-def compute_log_image_limits(norm_pool):
+def compute_log_image_limits(norm_pool, upper_percentile=NORMALIZATION_UPPER_PERCENTILE):
     """Return positive vmin/vmax limits suitable for log-scaled image plotting."""
     if not norm_pool:
         return None, None
@@ -32,7 +32,7 @@ def compute_log_image_limits(norm_pool):
     if pos_vals.size == 0:
         return None, None
     vmin = float(np.percentile(pos_vals, NORMALIZATION_LOWER_PERCENTILE))
-    vmax = float(np.percentile(pos_vals, NORMALIZATION_UPPER_PERCENTILE))
+    vmax = float(np.percentile(pos_vals, upper_percentile))
     if not np.isfinite(vmin) or vmin <= 0:
         vmin = float(np.nanmin(pos_vals))
     if not np.isfinite(vmax) or vmax <= vmin:
@@ -56,7 +56,17 @@ def reference_normalization_time(mission, date, time_str):
     return REFERENCE_NORMALIZATION_TIME
 
 
-def compute_reference_norm_limits(skymaps, selected_sites, date, ref_time_str, color, frame_interval, colorbar_scale="linear", mission="GNEISS"):
+def compute_reference_norm_limits(
+    skymaps,
+    selected_sites,
+    date,
+    ref_time_str,
+    color,
+    frame_interval,
+    colorbar_scale="linear",
+    mission="GNEISS",
+    upper_percentile=NORMALIZATION_UPPER_PERCENTILE,
+):
     """
     Compute shared normalization limits from a fixed reference time using
     post-mask main-map pixels across currently selected sites.
@@ -102,12 +112,12 @@ def compute_reference_norm_limits(skymaps, selected_sites, date, ref_time_str, c
         return None, None
 
     if colorbar_scale == "log":
-        vmin, vmax = compute_log_image_limits(norm_pool)
+        vmin, vmax = compute_log_image_limits(norm_pool, upper_percentile=upper_percentile)
         if vmin is None or vmax is None:
             print(f"Reference normalization at {ref_time_str} found no positive pixels; falling back to per-frame normalization.")
             return None, None
     else:
-        vmin, vmax = compute_linear_image_limits(norm_pool)
+        vmin, vmax = compute_linear_image_limits(norm_pool, upper_percentile=upper_percentile)
         if vmin is None or vmax is None:
             print(f"Reference normalization at {ref_time_str} found no finite pixels; falling back to per-frame normalization.")
             return None, None

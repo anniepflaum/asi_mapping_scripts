@@ -118,6 +118,30 @@ def rocket_launch_datetime(rocket_tag):
     )
 
 
+def rocket_time_window_datetimes(rocket_tag):
+    """Return mission-configured start/end datetimes for a rocket."""
+    date_key = rocket_default_date(rocket_tag)
+    start, end = ROCKET_TIME_WINDOWS[str(rocket_tag)]
+    return (
+        dt.datetime(
+            int(date_key[:4]),
+            int(date_key[4:6]),
+            int(date_key[6:8]),
+            int(start[:2]),
+            int(start[2:4]),
+            int(start[4:6]),
+        ),
+        dt.datetime(
+            int(date_key[:4]),
+            int(date_key[4:6]),
+            int(date_key[6:8]),
+            int(end[:2]),
+            int(end[2:4]),
+            int(end[4:6]),
+        ),
+    )
+
+
 def giraff_rocket_id_for_trajectory_path(path):
     """Return the GIRAFF rocket ID implied by a trajectory path, if known."""
     path_name = getattr(path, "name", None) or str(path)

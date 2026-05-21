@@ -23,7 +23,7 @@ from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 
-from core.constants import DEFAULT_GREEN_ALT_KM
+from core.constants import DEFAULT_GREEN_ALT_KM, NORMALIZATION_LOWER_PERCENTILE, NORMALIZATION_UPPER_PERCENTILE
 from core.series_utils import count_steps, format_time_arg, print_progress
 from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
 from core.missions import default_sites, default_time_range, mission_output_dir, resolve_mission_and_date, validate_color_and_sites
@@ -66,7 +66,7 @@ def series_output_dir(args):
     start_token = sanitize_time_for_filename(args.start)
     end_token = sanitize_time_for_filename(args.end)
     step_token = format_step_token(args.step)
-    folder_name = f"{args.mission}_launch_{args.color}_{sites_str}_{args.date}_{start_token}_to_{end_token}_step_{step_token}{green_alt_suffix(args)}"
+    folder_name = f"launch_{args.color}_{sites_str}_{args.date}_{start_token}_to_{end_token}_step_{step_token}{green_alt_suffix(args)}"
     return mission_output_dir(args.mission, color=args.color, date=args.date) / folder_name
 
 
@@ -102,6 +102,8 @@ def build_command(args, time_arg):
         args.colorbar_color,
         "--colorbar-scale",
         args.colorbar_scale,
+        "--vmax",
+        str(args.vmax),
     ]
     if args.rocket is not None:
         cmd.extend(["--rocket", args.rocket])
@@ -144,6 +146,7 @@ def main():
     )
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling")
     ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
+    ap.add_argument("--vmax", type=float, default=NORMALIZATION_UPPER_PERCENTILE, help="Upper percentile used as vmax for downstream ASI normalization")
     ap.add_argument(
         "--no-shared-norm",
         dest="no_shared_norm",
@@ -160,6 +163,8 @@ def main():
         args.mission, args.date = resolve_mission_and_date(args.mission, args.rocket)
     except ValueError as exc:
         ap.error(str(exc))
+    if not (NORMALIZATION_LOWER_PERCENTILE < args.vmax <= 100):
+        ap.error(f"--vmax must be > {NORMALIZATION_LOWER_PERCENTILE:g} and <= 100")
     default_start, default_end = default_time_range(
         args.mission,
         args.date,

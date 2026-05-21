@@ -8,10 +8,10 @@ from pathlib import Path
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
 from core.missions import (
-    default_date,
     default_sites,
     default_time_range,
     mission_output_dir,
+    resolve_mission_and_date,
     trajectory_config_tuples,
     validate_color_and_sites,
 )
@@ -104,16 +104,13 @@ def build_flight_time_line(times, launch_dt, traj_lookup):
 
 
 def compute_flight_time_bounds(start_dt, end_dt, launch_dt, traj_lookup):
-    """Return flight-time y-bounds cropped independently by requested start/end when in-flight."""
+    """Return flight-time y-bounds with launch fixed at 0 seconds."""
     traj_times = np.asarray(traj_lookup["times"], dtype=float)
     if traj_times.size == 0:
         raise ValueError("trajectory lookup has no time samples")
-    y_min = float(traj_times[0])
+    y_min = 0.0
     y_max = float(traj_times[-1])
-    req_start = (start_dt - launch_dt).total_seconds()
     req_end = (end_dt - launch_dt).total_seconds()
-    if y_min <= req_start <= y_max:
-        y_min = req_start
     if y_min <= req_end <= y_max:
         y_max = req_end
     return y_min, y_max
@@ -121,20 +118,25 @@ def compute_flight_time_bounds(start_dt, end_dt, launch_dt, traj_lookup):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", default=None, help="Date YYYYMMDD")
+    ap.add_argument("--rocket", choices=["397", "398", "380", "381"], default=None, help="Rocket ID used to select the mission date and default time window")
     ap.add_argument("--start", default=None, help="Start time HHMMSS(.fraction); defaults to mission rocket window")
     ap.add_argument("--end", default=None, help="End time HHMMSS(.fraction); defaults to mission rocket window")
     ap.add_argument("--step", type=float, default=0.3, help="Step size in seconds")
     ap.add_argument("--samples", type=int, default=480, help="Number of equal-time samples along each trajectory")
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to merge into the keogram")
-    ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default="GNEISS", help="Mission dataset to use")
+    ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--output", default=None, help="Output PNG path")
     args = ap.parse_args()
-    args.mission = args.mission.upper()
-    if args.date is None:
-        args.date = default_date(args.mission)
-    default_start, default_end = default_time_range(args.mission, args.date)
+    try:
+        args.mission, args.date = resolve_mission_and_date(args.mission, args.rocket)
+    except ValueError as exc:
+        ap.error(str(exc))
+    default_start, default_end = default_time_range(
+        args.mission,
+        args.date,
+        rocket_tags=[args.rocket] if args.rocket is not None else None,
+    )
     if args.start is None:
         args.start = default_start
     if args.end is None:
@@ -171,6 +173,14 @@ def main():
             tiff_metadata[site] = build_tiff_metadata(candidates, frame_interval)
 
     traj_configs = trajectory_config_tuples(args.mission, date=args.date)
+    if args.rocket is not None:
+        traj_configs = [
+            cfg
+            for cfg in traj_configs
+            if cfg[2].replace(".", "").endswith(args.rocket) or str(cfg[1]).endswith(args.rocket)
+        ]
+        if not traj_configs:
+            ap.error(f"No trajectory is configured for --rocket {args.rocket}")
     traj_data = []
     for key, tag, label, path in traj_configs:
         lookup = build_traj_lookup(str(path), color=args.color)
@@ -248,7 +258,7 @@ def main():
     for ax, traj in zip(axes, traj_data):
         if traj["launch_dt"] is None:
             line_y = np.full(len(times), np.nan, dtype=float)
-            y_bounds = (float(traj["flight_times"][0]), float(traj["flight_times"][-1]))
+            y_bounds = (0.0, float(traj["flight_times"][-1]))
         else:
             line_y = build_flight_time_line(times, traj["launch_dt"], traj["lookup"])
             y_bounds = compute_flight_time_bounds(start_dt, end_dt, traj["launch_dt"], traj["lookup"])

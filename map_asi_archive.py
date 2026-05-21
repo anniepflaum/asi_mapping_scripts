@@ -15,6 +15,7 @@ Arguments:
     --time           Time for the ASI images (format: HHMMSS or HHMMSS.s)
     --sites          List of sites to process (default: all sites)
     --pretty         Use pretty Cartopy plotting (default: fast plotting)
+    --vmax           Upper percentile used as vmax for ASI normalization (default: 99)
 """
 
 ###############################################################
@@ -32,7 +33,12 @@ import matplotlib
 matplotlib.use("Agg")
 
 from core.masks import build_overlap_masks
-from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
+from core.constants import (
+    FRAME_INTERVAL_SECONDS_GREEN,
+    FRAME_INTERVAL_SECONDS_RED,
+    NORMALIZATION_LOWER_PERCENTILE,
+    NORMALIZATION_UPPER_PERCENTILE,
+)
 from core.plot_norm import compute_reference_norm_limits, reference_normalization_time
 from core.plotting import plot_map
 from core.remote_data import load_pkr_image, retrieve_pfisr
@@ -79,6 +85,7 @@ def main():
     )
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling for ASI intensity")
     ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
+    ap.add_argument("--vmax", type=float, default=NORMALIZATION_UPPER_PERCENTILE, help="Upper percentile used as vmax for ASI normalization")
     ap.add_argument(
         "--no-shared-norm",
         dest="no_shared_norm",
@@ -108,6 +115,8 @@ def main():
             ap.error("--bounds must satisfy LON_MIN < LON_MAX and LAT_MIN < LAT_MAX")
     if args.green_alt is not None and args.green_alt <= 0:
         ap.error("--green-alt must be > 0")
+    if not (NORMALIZATION_LOWER_PERCENTILE < args.vmax <= 100):
+        ap.error(f"--vmax must be > {NORMALIZATION_LOWER_PERCENTILE:g} and <= 100")
     # --- Load geographic mapping for each ASI site ---
     selected_sites = set([s.upper() for s in args.sites])
     validate_color_and_sites(ap, args.mission, args.color, selected_sites, giraff_message_site="VEE TIFFs and PKR PNGs")
@@ -148,6 +157,7 @@ def main():
             frame_interval,
             colorbar_scale=args.colorbar_scale,
             mission=args.mission,
+            upper_percentile=args.vmax,
         )
     for site in ['ARV', 'VEE', 'BVR']:
         if site not in selected_sites:
@@ -202,6 +212,7 @@ def main():
         plot_geodetic_traj=args.plot_geodetic_traj,
         mission=args.mission,
         green_alt=args.green_alt,
+        upper_percentile=args.vmax,
     )
 
     tocall = time.time()

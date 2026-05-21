@@ -84,8 +84,13 @@ def load_brightness_series(csv_path, brightness_column):
     brightness = []
     with csv_path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
-        if brightness_column not in (reader.fieldnames or []):
-            raise KeyError(f"{csv_path} missing {brightness_column}")
+        fieldnames = reader.fieldnames or []
+        if brightness_column not in fieldnames:
+            fallback = brightness_column.replace("left_", "397_").replace("right_", "398_").replace("main_", "")
+            rocket_fallbacks = [name for name in fieldnames if name.endswith(fallback)]
+            if not rocket_fallbacks:
+                raise KeyError(f"{csv_path} missing {brightness_column}")
+            brightness_column = rocket_fallbacks[0]
         for row in reader:
             value = row.get(brightness_column, "")
             if not value:

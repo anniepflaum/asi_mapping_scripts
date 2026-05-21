@@ -53,7 +53,10 @@ def load_brightness(csv_path, brightness_column):
     brightness = []
     with Path(csv_path).open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
-        if brightness_column not in (reader.fieldnames or []):
+        fieldnames = reader.fieldnames or []
+        if brightness_column not in fieldnames:
+            brightness_column = brightness_column.replace("left_", "397_").replace("right_", "398_")
+        if brightness_column not in fieldnames:
             raise KeyError(f"Missing brightness column {brightness_column!r} in {csv_path}")
         for row in reader:
             value = row.get(brightness_column, "")
