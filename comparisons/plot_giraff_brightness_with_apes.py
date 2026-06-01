@@ -321,7 +321,7 @@ def plot_brightness_with_apes(
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rocket", choices=["380", "381"], required=True, help="GIRAFF rocket number")
-    ap.add_argument("--color", choices=["green"], default="green", help="ASI color channel")
+    ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--minute", type=int, nargs="+", default=None, help="APES 1-minute panel number(s) to compare")
     ap.add_argument("--all-alts", action="store_true", help="Overlay all available green-altitude brightness CSVs")
     args = ap.parse_args()

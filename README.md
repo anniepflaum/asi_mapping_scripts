@@ -24,8 +24,8 @@ GIRAFF uses one `main` trajectory. There are no left/right GIRAFF
 trajectories. Selecting `--mission GIRAFF --date 20250209` automatically uses
 rocket `380`; `20250202` uses rocket `381`.
 
-GIRAFF currently supports green-channel VEE imagery only. Passing red imagery or
-non-VEE sites for GIRAFF will stop with an argument error.
+GIRAFF supports green- and red-channel VEE imagery. Non-VEE image sites for
+GIRAFF will stop with an argument error.
 
 ## Layout
 
@@ -128,7 +128,7 @@ python3 map_asi_archive.py \
 
 Useful options:
 - `--pretty`: use Cartopy plotting
-- `--color green|red`: ASI channel, with GIRAFF restricted to green
+- `--color green|red`: ASI channel
 - `--bounds LON_MIN LON_MAX LAT_MIN LAT_MAX`: map bounds override
 - `--colorbar-scale linear|log`
 - `--colorbar-color monochromatic|viridis`
@@ -281,8 +281,8 @@ Outputs are written under color, mission, and for GIRAFF rocket directories:
 ```
 
 Examples:
-- mapped images: `GIRAFF_launch_green_VEE_20250209_083600.png`
-- map series folders: `GIRAFF_launch_green_VEE_20250209_083501_to_084410_step_10/`
+- mapped images: `GIRAFF_launch_red_VEE_20250209_083600.png`
+- map series folders: `GIRAFF_launch_red_VEE_20250209_083501_to_084410_step_10/`
 - trajectory brightness CSVs: `GIRAFF_brightness_vs_time_20250209_083501_084410_step0p05.csv`
 - IPP brightness CSVs: `GIRAFF_ipps_brightness_series_20250209_083501_084410_step0p05.csv`
 - GIRAFF keograms: `GIRAFF_trajectory_keogram_green_20250209_083501_084410.png`

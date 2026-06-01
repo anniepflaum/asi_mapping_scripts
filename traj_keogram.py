@@ -2,7 +2,9 @@
 """Build brightness keograms along mission trajectories."""
 
 import argparse
+import csv
 import datetime as dt
+import json
 from pathlib import Path
 
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
@@ -16,10 +18,8 @@ from core.missions import (
     validate_color_and_sites,
 )
 from core.skymaps import load_skymaps
-import matplotlib.dates as mdates
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -29,6 +29,9 @@ from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates, load_
 from core.traj_utils import build_traj_lookup, get_launch_start_from_traj_csv, resample_traj_by_time
 
 
+GNEISS_MAGLAT_CSV = mission_output_dir("GNEISS", color="green") / "tg_to_maglat.csv"
+
+
 def build_output_path(output_arg, mission, date_str, start, end, color):
     if output_arg:
         return Path(output_arg)
@@ -36,6 +39,17 @@ def build_output_path(output_arg, mission, date_str, start, end, color):
     end_tok = sanitize_time_for_filename(end)
     prefix = "trajectory_keogram" if mission == "GNEISS" else f"{mission}_trajectory_keogram"
     return mission_output_dir(mission, color=color, date=date_str) / f"{prefix}_{color}_{date_str}_{start_tok}_{end_tok}.png"
+
+
+def build_data_output_path(data_output_arg, output_path):
+    if data_output_arg:
+        return Path(data_output_arg)
+    return Path(output_path).with_suffix(".npz")
+
+
+def build_maglat_output_path(output_path):
+    output_path = Path(output_path)
+    return output_path.with_name(f"{output_path.stem}_maglat{output_path.suffix}")
 
 
 def build_site_sampler(skymaps, site):
@@ -116,6 +130,147 @@ def compute_flight_time_bounds(start_dt, end_dt, launch_dt, traj_lookup):
     return y_min, y_max
 
 
+def tg_reference_datetime(mission, date):
+    """Return the mission TG reference time used for x-axis elapsed seconds."""
+    if mission == "GNEISS":
+        tg_start, _tg_end = default_time_range(mission, date, rocket_tags=["397", "398"])
+    else:
+        tg_start, _tg_end = default_time_range(mission, date)
+    return parse_date_and_time(date, tg_start)
+
+
+def load_gneiss_maglat_lookup(csv_path=GNEISS_MAGLAT_CSV):
+    """Load TG-relative magnetic latitude series for each GNEISS rocket."""
+    lookup = {}
+    with Path(csv_path).open("r", encoding="utf-8", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        required = {"time_since_TG_s", "397_magnetic_lat_deg", "398_magnetic_lat_deg"}
+        missing = sorted(required - set(reader.fieldnames or []))
+        if missing:
+            raise ValueError(f"{csv_path} missing column(s): {', '.join(missing)}")
+        rows = list(reader)
+    for tag in ("397", "398"):
+        times = []
+        maglats = []
+        field = f"{tag}_magnetic_lat_deg"
+        for row in rows:
+            if row.get("time_since_TG_s") and row.get(field):
+                times.append(float(row["time_since_TG_s"]))
+                maglats.append(float(row[field]))
+        if not times:
+            raise ValueError(f"{csv_path} has no magnetic latitude samples for rocket {tag}")
+        lookup[tag] = (np.asarray(times, dtype=float), np.asarray(maglats, dtype=float))
+    return lookup
+
+
+def interpolate_maglat_arrays(time_since_tg, tags, maglat_lookup):
+    """Interpolate magnetic latitude onto keogram times for each rocket."""
+    arrays = {}
+    for tag in tags:
+        source_times, source_maglats = maglat_lookup[str(tag)]
+        values = np.full(time_since_tg.shape, np.nan, dtype=float)
+        valid = (time_since_tg >= source_times[0]) & (time_since_tg <= source_times[-1])
+        values[valid] = np.interp(time_since_tg[valid], source_times, source_maglats)
+        arrays[str(tag)] = values
+    return arrays
+
+
+def save_keogram_data(
+    data_output_path,
+    args,
+    panels,
+    time_since_tg,
+    x_min,
+    x_max,
+    vmin,
+    vmax,
+    source_data_files,
+    maglat_by_tag=None,
+):
+    """Save the plotted keogram arrays so another script can redraw the panel."""
+    data = {
+        "mission": np.asarray(args.mission),
+        "date": np.asarray(args.date),
+        "color": np.asarray(args.color),
+        "start": np.asarray(args.start),
+        "end": np.asarray(args.end),
+        "time_since_tg_s": np.asarray(time_since_tg, dtype=float),
+        "x_limits_s": np.asarray([x_min, x_max], dtype=float),
+        "brightness_limits": np.asarray([max(vmin, 1e-6), max(vmax, max(vmin, 1e-6) * 1.0001)], dtype=float),
+        "tags": np.asarray([str(panel[-1]) for panel in panels]),
+        "metadata_json": np.asarray(json.dumps({"source_data_file": source_data_files})),
+    }
+    for _ax, img, flight_times, line_y, y_bounds, _title, _launch_start, tag in panels:
+        tag = str(tag)
+        y_min, y_max = y_bounds
+        start_idx = int(np.searchsorted(flight_times, y_min, side="left"))
+        end_idx = int(np.searchsorted(flight_times, y_max, side="right"))
+        start_idx = max(0, min(start_idx, len(flight_times) - 1))
+        end_idx = max(start_idx + 1, min(end_idx, len(flight_times)))
+        data[f"brightness_{tag}"] = np.asarray(img[start_idx:end_idx, :], dtype=float)
+        data[f"flight_time_{tag}_s"] = np.asarray(flight_times[start_idx:end_idx], dtype=float)
+        data[f"trajectory_line_{tag}_s"] = np.asarray(line_y, dtype=float)
+        data[f"y_limits_{tag}_s"] = np.asarray([y_min, y_max], dtype=float)
+        if maglat_by_tag is not None and tag in maglat_by_tag:
+            data[f"magnetic_latitude_{tag}_deg"] = np.asarray(maglat_by_tag[tag], dtype=float)
+
+    data_output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(data_output_path, **data)
+    print(f"Saved keogram data to {data_output_path}")
+
+
+def plot_maglat_keogram(output_path, panels, maglat_by_tag, log_norm, color):
+    """Plot GNEISS keograms with magnetic latitude on the x-axis."""
+    fig_height = 5 if len(panels) == 1 else 5 * len(panels)
+    fig, axes = plt.subplots(len(panels), 1, figsize=(14, fig_height), sharex=True, constrained_layout=True)
+    if len(panels) == 1:
+        axes = [axes]
+    trajectory_line_colors = {
+        "397": "tab:blue",
+        "398": "tab:orange",
+    }
+    image_handle = None
+    for ax, panel in zip(axes, panels):
+        _time_ax, img, flight_times, line_y, y_bounds, title, _launch_start, tag = panel
+        tag = str(tag)
+        maglats = maglat_by_tag[tag]
+        y_min, y_max = y_bounds
+        start_idx = int(np.searchsorted(flight_times, y_min, side="left"))
+        end_idx = int(np.searchsorted(flight_times, y_max, side="right"))
+        start_idx = max(0, min(start_idx, len(flight_times) - 1))
+        end_idx = max(start_idx + 1, min(end_idx, len(flight_times)))
+        valid_cols = np.isfinite(maglats)
+        image_handle = ax.pcolormesh(
+            maglats[valid_cols],
+            flight_times[start_idx:end_idx],
+            img[start_idx:end_idx, :][:, valid_cols],
+            cmap="Greens",
+            norm=log_norm,
+            shading="auto",
+        )
+        valid_line = valid_cols & np.isfinite(line_y) & (line_y >= y_min) & (line_y <= y_max)
+        if np.any(valid_line):
+            ax.plot(
+                maglats[valid_line],
+                line_y[valid_line],
+                color=trajectory_line_colors.get(tag, "#ff3b30"),
+                linewidth=1.4,
+                alpha=1.0,
+                label=f"{tag} trajectory",
+            )
+            ax.legend(loc="upper right")
+        ax.set_title(title)
+        ax.set_ylabel("Flight Time Since Launch (s)")
+        ax.set_ylim(float(y_min), float(y_max))
+
+    axes[-1].set_xlabel("Magnetic Latitude (deg)")
+    cbar = fig.colorbar(image_handle, ax=axes, orientation="vertical", shrink=0.95)
+    cbar.set_label(f"{color.capitalize()} Channel Intensity")
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved magnetic-latitude keogram to {output_path}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rocket", choices=["397", "398", "380", "381"], default=None, help="Rocket ID used to select the mission date and default time window")
@@ -127,6 +282,7 @@ def main():
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--output", default=None, help="Output PNG path")
+    ap.add_argument("--data-output", default=None, help="Output NPZ path for redrawable keogram data; defaults to the PNG path with .npz")
     args = ap.parse_args()
     try:
         args.mission, args.date = resolve_mission_and_date(args.mission, args.rocket)
@@ -202,6 +358,9 @@ def main():
                 "cols": [],
             }
         )
+    if args.mission == "GNEISS":
+        plot_order = {"398": 0, "397": 1}
+        traj_data.sort(key=lambda traj: plot_order.get(str(traj["tag"]), 99))
 
     times = []
     step_td = dt.timedelta(seconds=args.step)
@@ -269,19 +428,25 @@ def main():
                 traj["flight_times"],
                 line_y,
                 y_bounds,
-                f"{traj['label']} Trajectory Keogram",
+                f"{traj['tag']} Trajectory Keogram",
                 traj["launch_start"],
+                traj["tag"],
             )
         )
     image_handle = None
-    time_nums = mdates.date2num(times)
-    x_min = mdates.date2num(start_dt)
-    x_max = mdates.date2num(end_dt)
+    tg_dt = tg_reference_datetime(args.mission, args.date)
+    time_since_tg = np.asarray([(time - tg_dt).total_seconds() for time in times], dtype=float)
+    x_min = (start_dt - tg_dt).total_seconds()
+    x_max = (end_dt - tg_dt).total_seconds()
     if x_min == x_max:
-        pad = max(args.step, 1.0) / 86400.0
+        pad = max(args.step, 1.0)
         x_min -= pad / 2.0
         x_max += pad / 2.0
-    for ax, img, flight_times, line_y, y_bounds, title, launch_start in panels:
+    trajectory_line_colors = {
+        "397": "tab:blue",
+        "398": "tab:orange",
+    }
+    for ax, img, flight_times, line_y, y_bounds, title, launch_start, tag in panels:
         y_min, y_max = y_bounds
         start_idx = int(np.searchsorted(flight_times, y_min, side="left"))
         end_idx = int(np.searchsorted(flight_times, y_max, side="right"))
@@ -298,40 +463,50 @@ def main():
             cmap="Greens",
             norm=log_norm,
         )
-        t0_label = format_time_label(launch_start) if launch_start else "unknown"
-        ax.set_title(f"{title} | T0 {t0_label}")
+        ax.set_title(f"{title}")
         ax.set_ylabel("Flight Time Since Launch (s)")
         valid_line = np.isfinite(line_y) & (line_y >= y_min) & (line_y <= y_max)
         if np.any(valid_line):
             ax.plot(
-                time_nums[valid_line],
+                time_since_tg[valid_line],
                 line_y[valid_line],
-                color="#ff3b30",
+                color=trajectory_line_colors.get(str(tag), "#ff3b30"),
                 linewidth=1.4,
                 alpha=1.0,
-                label="Rocket trajectory",
+                label=f"{tag} trajectory",
             )
             ax.legend(loc="upper right")
         ax.set_ylim(float(y_min), float(y_max))
 
-    axes[-1].set_xlabel("Time UTC")
-    minute_locator = mdates.MinuteLocator(interval=1)
-    axes[-1].xaxis.set_major_locator(minute_locator)
-    axes[-1].xaxis.set_major_formatter(FuncFormatter(lambda value, _pos: mdates.num2date(value).strftime("%H:%M")))
+    axes[-1].set_xlabel("Time since TG (s)")
 
     cbar = fig.colorbar(image_handle, ax=axes, orientation="vertical", shrink=0.95)
     cbar.set_label(f"{args.color.capitalize()} Channel Intensity")
 
-    date_label = f"{args.date[:4]}-{args.date[4:6]}-{args.date[6:]}"
-    fig.suptitle(
-        f"Trajectory Keogram\n"
-        f"{date_label} {format_time_label(args.start)} to {format_time_label(args.end)}",
-        fontsize=14,
-    )
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    data_output_path = build_data_output_path(args.data_output, output_path)
+    maglat_by_tag = None
+    if args.mission == "GNEISS":
+        maglat_lookup = load_gneiss_maglat_lookup()
+        maglat_by_tag = interpolate_maglat_arrays(time_since_tg, [panel[-1] for panel in panels], maglat_lookup)
+    source_data_files = [Path(traj["path"]).name for traj in traj_data]
+    save_keogram_data(
+        data_output_path,
+        args,
+        panels,
+        time_since_tg,
+        x_min,
+        x_max,
+        vmin,
+        vmax,
+        source_data_files,
+        maglat_by_tag=maglat_by_tag,
+    )
     plt.savefig(output_path, dpi=150)
+    plt.close(fig)
     print(f"Saved keogram to {output_path}")
+    if maglat_by_tag is not None:
+        plot_maglat_keogram(build_maglat_output_path(output_path), panels, maglat_by_tag, log_norm, args.color)
 
 
 if __name__ == "__main__":

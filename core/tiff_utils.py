@@ -14,25 +14,65 @@ import tifffile
 from core.paths import WORKSPACE_DIR
 
 
-GIRAFF_TIFF_PATH = Path("/Volumes/LynchK/GIRAFF/GIRAFF/SOK_250202_5577/ut06/SOK250202_06595930_16bit.tif")
-GIRAFF_LOG_PATH = Path("/Volumes/LynchK/GIRAFF/GIRAFF/SOK_250202_5577/ut06/SOK250202_06595930_16bit.log")
-GIRAFF_CACHE_DIR = WORKSPACE_DIR / "images" / "green" / "VEE" / "GIRAFF"
-GIRAFF_CACHE_NPY_PATH = GIRAFF_CACHE_DIR / "SOK250202_launch_070618_071637_uint16.npy"
-GIRAFF_CACHE_METADATA_PATH = GIRAFF_CACHE_DIR / "SOK250202_launch_070618_071637_metadata.json"
-GIRAFF_TIFF_PATHS_BY_DATE = {
-    "20250202": GIRAFF_TIFF_PATH,
-    "20250209": Path("/Volumes/LynchK/GIRAFF/GIRAFF/SOK_250209_5577/ut07/SOK250209_07495931_16bit.tif"),
+GIRAFF_GREEN_CACHE_DIR = WORKSPACE_DIR / "images" / "green" / "VEE" / "GIRAFF"
+GIRAFF_RED_CACHE_DIR = WORKSPACE_DIR / "images" / "red" / "VEE" / "GIRAFF"
+GIRAFF_BLUE_CACHE_DIR = WORKSPACE_DIR / "images" / "blue" / "VEE" / "GIRAFF"
+
+GIRAFF_TIFF_PATHS_BY_COLOR_DATE = {
+    "green": {
+        "20250202": Path("/Volumes/LynchK/GIRAFF/GIRAFF/SOK_250202_5577/ut06/SOK250202_06595930_16bit.tif"),
+        "20250209": Path("/Volumes/LynchK/GIRAFF/GIRAFF/SOK_250209_5577/ut07/SOK250209_07495931_16bit.tif"),
+    },
+    "red": {
+        "20250202": Path("/Volumes/LynchK/GIRAFF/GIRAFF/THA_250202_8446/ut06/THA250202_06595921_16bit.tif"),
+        "20250209": Path("/Volumes/LynchK/GIRAFF/GIRAFF/THA_250209_8446/ut07/THA250209_07475922_16bit.tif"),
+    },
+    "blue": {},
 }
+GIRAFF_CACHE_PATHS_BY_COLOR_DATE = {
+    "green": {
+        "20250202": (
+            GIRAFF_GREEN_CACHE_DIR / "SOK250202_launch_070618_071637_uint16.npy",
+            GIRAFF_GREEN_CACHE_DIR / "SOK250202_launch_070618_071637_metadata.json",
+        ),
+        "20250209": (
+            GIRAFF_GREEN_CACHE_DIR / "SOK250209_083140_084415_uint16.npy",
+            GIRAFF_GREEN_CACHE_DIR / "SOK250209_083140_084415_metadata.json",
+        ),
+    },
+    "red": {
+        "20250202": (
+            GIRAFF_RED_CACHE_DIR / "THA250202_070618_071637_uint16.npy",
+            GIRAFF_RED_CACHE_DIR / "THA250202_070618_071637_metadata.json",
+        ),
+        "20250209": (
+            GIRAFF_RED_CACHE_DIR / "THA250209_083140_084415_uint16.npy",
+            GIRAFF_RED_CACHE_DIR / "THA250209_083140_084415_metadata.json",
+        ),
+    },
+    "blue": {},
+}
+
+# Backward-compatible names for older scripts/imports. Green remains the default.
+GIRAFF_CACHE_DIR = GIRAFF_GREEN_CACHE_DIR
+GIRAFF_TIFF_PATH = GIRAFF_TIFF_PATHS_BY_COLOR_DATE["green"]["20250202"]
+GIRAFF_LOG_PATH = GIRAFF_TIFF_PATH.with_suffix(".log")
+GIRAFF_CACHE_NPY_PATH, GIRAFF_CACHE_METADATA_PATH = GIRAFF_CACHE_PATHS_BY_COLOR_DATE["green"]["20250202"]
+GIRAFF_TIFF_PATHS_BY_DATE = GIRAFF_TIFF_PATHS_BY_COLOR_DATE["green"]
 GIRAFF_LOG_PATHS_BY_DATE = {
     date: path.with_suffix(".log") for date, path in GIRAFF_TIFF_PATHS_BY_DATE.items()
 }
-GIRAFF_CACHE_PATHS_BY_DATE = {
-    "20250202": (GIRAFF_CACHE_NPY_PATH, GIRAFF_CACHE_METADATA_PATH),
-    "20250209": (
-        GIRAFF_CACHE_DIR / "SOK250209_083140_084415_uint16.npy",
-        GIRAFF_CACHE_DIR / "SOK250209_083140_084415_metadata.json",
-    ),
-}
+GIRAFF_CACHE_PATHS_BY_DATE = GIRAFF_CACHE_PATHS_BY_COLOR_DATE["green"]
+
+
+def normalize_color(color):
+    return str(color or "green").lower()
+
+
+def iter_giraff_cache_paths():
+    for paths_by_date in GIRAFF_CACHE_PATHS_BY_COLOR_DATE.values():
+        for cache_path, metadata_path in paths_by_date.values():
+            yield cache_path, metadata_path
 
 
 def parse_tiff_start_datetime(tiff_path):
@@ -87,16 +127,20 @@ def _parse_iso_datetime(value):
     return dt.datetime.fromisoformat(value) if value else None
 
 
-def get_giraff_cache_paths(date_str=None):
+def get_giraff_cache_paths(date_str=None, color="green"):
     date_key = str(date_str) if date_str is not None else None
-    return GIRAFF_CACHE_PATHS_BY_DATE.get(date_key, (GIRAFF_CACHE_NPY_PATH, GIRAFF_CACHE_METADATA_PATH))
+    color_key = normalize_color(color)
+    paths_by_date = GIRAFF_CACHE_PATHS_BY_COLOR_DATE.get(color_key, {})
+    if date_key in paths_by_date:
+        return paths_by_date[date_key]
+    return (None, None)
 
 
-def get_giraff_cache_metadata(date_str=None, cache_path=None, metadata_path=None):
+def get_giraff_cache_metadata(date_str=None, color="green", cache_path=None, metadata_path=None):
     """Return local GIRAFF launch-window cache metadata if available."""
     if cache_path is None or metadata_path is None:
-        cache_path, metadata_path = get_giraff_cache_paths(date_str)
-    if not cache_path.exists() or not metadata_path.exists():
+        cache_path, metadata_path = get_giraff_cache_paths(date_str, color=color)
+    if cache_path is None or metadata_path is None or not cache_path.exists() or not metadata_path.exists():
         return None
     with open(metadata_path, "r", encoding="utf-8") as fh:
         meta = json.load(fh)
@@ -151,7 +195,7 @@ def sidecar_log_path(tiff_path):
 def tiff_timing_metadata(tiff_path, fallback_frame_interval):
     """Return start/end/count/cadence metadata for a TIFF."""
     tiff_path = Path(tiff_path)
-    for _date_key, (cache_path, metadata_path) in GIRAFF_CACHE_PATHS_BY_DATE.items():
+    for cache_path, metadata_path in iter_giraff_cache_paths():
         if tiff_path == cache_path:
             cache_meta = get_giraff_cache_metadata(cache_path=cache_path, metadata_path=metadata_path)
             if cache_meta is None:
@@ -165,20 +209,6 @@ def tiff_timing_metadata(tiff_path, fallback_frame_interval):
                 "source": str(metadata_path),
                 "cache_path": str(cache_path),
             }
-    if tiff_path == GIRAFF_CACHE_NPY_PATH:
-        cache_meta = get_giraff_cache_metadata()
-        if cache_meta is None:
-            raise FileNotFoundError(f"GIRAFF cache metadata not found: {GIRAFF_CACHE_METADATA_PATH}")
-        return {
-            "path": str(GIRAFF_CACHE_NPY_PATH),
-            "start_dt": cache_meta["cache_start_dt"],
-            "end_dt": cache_meta["cache_end_dt"],
-            "n_frames": int(cache_meta["cache_frame_count"]),
-            "frame_interval": float(cache_meta["frame_interval_seconds"]),
-            "source": str(GIRAFF_CACHE_METADATA_PATH),
-            "cache_path": str(GIRAFF_CACHE_NPY_PATH),
-        }
-
     log_path = sidecar_log_path(tiff_path)
     if log_path is not None:
         log_meta = parse_giraff_log(log_path)
@@ -210,23 +240,26 @@ def tiff_timing_metadata(tiff_path, fallback_frame_interval):
     }
 
 
-def get_giraff_tiff_candidates(date_str, override_dirs=None):
+def get_giraff_tiff_candidates(date_str, color="green", override_dirs=None):
     """Discover GIRAFF SOK/VEE TIFFs for a YYYYMMDD date."""
     date_key = str(date_str)
-    if date_key not in GIRAFF_TIFF_PATHS_BY_DATE:
-        supported = ", ".join(sorted(GIRAFF_TIFF_PATHS_BY_DATE))
-        print(f"VEE: supported GIRAFF dates are {supported}, not {date_str}.")
-        return []
-    cache_path, metadata_path = get_giraff_cache_paths(date_key)
+    color_key = normalize_color(color)
+    cache_path, metadata_path = get_giraff_cache_paths(date_key, color=color_key)
     if get_giraff_cache_metadata(cache_path=cache_path, metadata_path=metadata_path) is not None:
         return [str(cache_path)]
-    tiff_path = GIRAFF_TIFF_PATHS_BY_DATE[date_key]
-    log_path = GIRAFF_LOG_PATHS_BY_DATE[date_key]
+
+    tiff_path = GIRAFF_TIFF_PATHS_BY_COLOR_DATE.get(color_key, {}).get(date_key)
+    if tiff_path is None:
+        supported = sorted(GIRAFF_TIFF_PATHS_BY_COLOR_DATE.get(color_key, {}))
+        supported_text = ", ".join(supported) if supported else "none"
+        print(f"VEE: supported GIRAFF {color_key} dates are {supported_text}, not {date_str}.")
+        return []
+    log_path = tiff_path.with_suffix(".log")
     if not tiff_path.exists():
-        print(f"VEE: hard-coded GIRAFF TIFF not found: {tiff_path}")
+        print(f"VEE: hard-coded GIRAFF {color_key} TIFF not found: {tiff_path}")
         return []
     if not log_path.exists():
-        print(f"VEE: hard-coded GIRAFF log not found: {log_path}")
+        print(f"VEE: hard-coded GIRAFF {color_key} log not found: {log_path}")
         return []
     return [str(tiff_path)]
 
@@ -242,7 +275,7 @@ def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission=
     if isinstance(override_dirs, str):
         override_dirs = [override_dirs]
     if str(mission).upper() == "GIRAFF" and site == "VEE":
-        return get_giraff_tiff_candidates(date_str, override_dirs=override_dirs)
+        return get_giraff_tiff_candidates(date_str, color=color, override_dirs=override_dirs)
 
     site_prefixes = [site]
     dirs_to_search = list(override_dirs) if override_dirs else [f"../images/{color}/{site}"]
@@ -275,14 +308,18 @@ def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval, colo
     Search candidate TIFF tiles and load the frame closest to target_dt.
     Returns (raw_image, normalized_image), both float32 arrays.
     """
-    cache_paths = {cache_path for cache_path, _metadata_path in GIRAFF_CACHE_PATHS_BY_DATE.values()}
-    tiff_lookup_paths = set(GIRAFF_TIFF_PATHS_BY_DATE.values())
+    cache_paths = {cache_path for cache_path, _metadata_path in iter_giraff_cache_paths()}
+    tiff_lookup_paths = {
+        path
+        for paths_by_date in GIRAFF_TIFF_PATHS_BY_COLOR_DATE.values()
+        for path in paths_by_date.values()
+    }
     selected_cache_path = next((Path(path) for path in tiff_paths if Path(path) in cache_paths), None)
     uses_giraff_cache = site == "VEE" and selected_cache_path is not None
     if uses_giraff_cache or (site == "VEE" and any(Path(path) in tiff_lookup_paths for path in tiff_paths)):
         metadata_path = None
         if selected_cache_path is not None:
-            for cache_path, candidate_metadata_path in GIRAFF_CACHE_PATHS_BY_DATE.values():
+            for cache_path, candidate_metadata_path in iter_giraff_cache_paths():
                 if selected_cache_path == cache_path:
                     metadata_path = candidate_metadata_path
                     break

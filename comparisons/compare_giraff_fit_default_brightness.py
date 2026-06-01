@@ -4,32 +4,40 @@
 import csv
 import datetime as dt
 import os
+import argparse
+import sys
 from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 
+from core.missions import mission_output_dir
 
-BASE_DIR = Path("/Users/anniepflaum/asi_mapping/mapped/green/GIRAFF")
 VALUE_COLUMN = "main_reference_norm_brightness"
-PANELS = [
-    {
-        "rocket": "381",
-        "title": "GIRAFF/381 trajectory brightness",
-        "fit": BASE_DIR / "381" / "GIRAFF_brightness_vs_time_20250202_070715_071636_step0p05_FIT.csv",
-        "default": BASE_DIR / "381" / "GIRAFF_brightness_vs_time_20250202_070715_071636_step0p05.csv",
-    },
-    {
-        "rocket": "380",
-        "title": "GIRAFF/380 trajectory brightness",
-        "fit": BASE_DIR / "380" / "GIRAFF_brightness_vs_time_20250209_083501_084410_step0p05_FIT.csv",
-        "default": BASE_DIR / "380" / "GIRAFF_brightness_vs_time_20250209_083501_084410_step0p05.csv",
-    },
-]
+
+
+def panel_configs(color):
+    base_dir_381 = mission_output_dir("GIRAFF", color=color, date="20250202")
+    base_dir_380 = mission_output_dir("GIRAFF", color=color, date="20250209")
+    return [
+        {
+            "rocket": "381",
+            "title": "GIRAFF/381 trajectory brightness",
+            "fit": base_dir_381 / "381" / "GIRAFF_brightness_vs_time_20250202_070715_071636_step0p05_FIT.csv",
+            "default": base_dir_381 / "381" / "GIRAFF_brightness_vs_time_20250202_070715_071636_step0p05.csv",
+        },
+        {
+            "rocket": "380",
+            "title": "GIRAFF/380 trajectory brightness",
+            "fit": base_dir_380 / "380" / "GIRAFF_brightness_vs_time_20250209_083501_084410_step0p05_FIT.csv",
+            "default": base_dir_380 / "380" / "GIRAFF_brightness_vs_time_20250209_083501_084410_step0p05.csv",
+        },
+    ]
 
 
 def load_series(csv_path, value_column=VALUE_COLUMN):
@@ -74,19 +82,24 @@ def plot_panel(ax, config):
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--color", choices=["green", "red"], default="green", help="GIRAFF ASI color channel")
+    args = ap.parse_args()
+
+    panels = panel_configs(args.color)
     fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=False)
-    for ax, config in zip(axes, PANELS):
+    for ax, config in zip(axes, panels):
         plot_panel(ax, config)
     axes[-1].set_xlabel("UTC time")
     fig.autofmt_xdate()
     fig.tight_layout()
 
-    output_path = BASE_DIR / "don_vs_leslie_skymaps.png"
+    output_path = mission_output_dir("GIRAFF", color=args.color, date="20250209") / f"don_vs_leslie_skymaps_{args.color}.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"Saved plot to {output_path}")
-    for config in PANELS:
+    for config in panels:
         print(f"{config['rocket']} Don: {config['fit']}")
         print(f"{config['rocket']} Leslie: {config['default']}")
 

@@ -57,6 +57,7 @@ def series_prefix(mission):
 
 GREEN_BRIGHTNESS_ALTS_KM = (95.0, 100.0, 105.0, 110.0)
 DEFAULT_PLOT_GREEN_ALT_KM = 110.0
+GNEISS_MAGLAT_CSV = mission_output_dir("GNEISS", color="green") / "tg_to_maglat.csv"
 
 
 def format_alt_token(alt_km):
@@ -199,6 +200,45 @@ def suppress_outside_rocket_window(value, sample_dt, mission, rocket_tag):
     return value
 
 
+def load_gneiss_maglat_lookup(csv_path=GNEISS_MAGLAT_CSV):
+    """Load TG-relative magnetic latitude series for the GNEISS rockets."""
+    times_by_rocket = {"397": [], "398": []}
+    maglats_by_rocket = {"397": [], "398": []}
+    with Path(csv_path).open("r", encoding="utf-8", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        required = {"time_since_TG_s", "397_magnetic_lat_deg", "398_magnetic_lat_deg"}
+        missing = sorted(required - set(reader.fieldnames or []))
+        if missing:
+            raise ValueError(f"{csv_path} missing column(s): {', '.join(missing)}")
+        for row in reader:
+            tg_value = row.get("time_since_TG_s", "")
+            if not tg_value:
+                continue
+            tg_time = float(tg_value)
+            for rocket in ("397", "398"):
+                maglat_value = row.get(f"{rocket}_magnetic_lat_deg", "")
+                if maglat_value:
+                    times_by_rocket[rocket].append(tg_time)
+                    maglats_by_rocket[rocket].append(float(maglat_value))
+    lookup = {}
+    for rocket in ("397", "398"):
+        if not times_by_rocket[rocket]:
+            raise ValueError(f"{csv_path} has no magnetic latitude samples for rocket {rocket}")
+        lookup[rocket] = (
+            np.asarray(times_by_rocket[rocket], dtype=float),
+            np.asarray(maglats_by_rocket[rocket], dtype=float),
+        )
+    return lookup
+
+
+def interpolate_gneiss_maglat(maglat_lookup, rocket, tg_time):
+    """Return magnetic latitude at TG time, or None outside the source range."""
+    times, maglats = maglat_lookup[str(rocket)]
+    if tg_time < times[0] or tg_time > times[-1]:
+        return None
+    return float(np.interp(tg_time, times, maglats))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rocket", choices=["397", "398", "380", "381"], default=None, help="Rocket ID used to select the ASI image date")
@@ -332,9 +372,11 @@ def main():
 
     fieldnames = ["time"]
     gneiss_t0 = None
+    gneiss_maglat_lookup = None
     if args.mission == "GNEISS":
         fieldnames.append("TG")
         gneiss_t0 = rocket_launch_datetime("397")
+        gneiss_maglat_lookup = load_gneiss_maglat_lookup()
     for key in traj_lookups:
         csv_key = csv_prefixes[key]
         fieldnames.extend(
@@ -344,6 +386,8 @@ def main():
                 f"{csv_key}_rocket_alt_km",
             ]
         )
+        if args.mission == "GNEISS":
+            fieldnames.append(f"{csv_key}_maglat")
         for alt in alts:
             alt_prefix = alt_column_prefix(csv_key, alt)
             fieldnames.append(f"{alt_prefix}_brightness")
@@ -393,9 +437,11 @@ def main():
 
         plot_times.append(t)
         row = {"time": t.isoformat()}
+        tg_time = None
         if args.mission == "GNEISS":
-            row["TG"] = f"{(t - gneiss_t0).total_seconds():.6f}"
-            plot_times[-1] = (t - gneiss_t0).total_seconds()
+            tg_time = (t - gneiss_t0).total_seconds()
+            row["TG"] = f"{tg_time:.6f}"
+            plot_times[-1] = tg_time
         for key, traj_lookup in traj_lookups.items():
             csv_key = csv_prefixes[key]
             in_window = in_rocket_time_window(t, args.mission, csv_key)
@@ -404,6 +450,9 @@ def main():
             row[f"{csv_key}_rocket_lat"] = f"{rocket_lat:.6f}" if in_window and rocket_lat is not None else ""
             row[f"{csv_key}_rocket_lon"] = f"{rocket_lon:.6f}" if in_window and rocket_lon is not None else ""
             row[f"{csv_key}_rocket_alt_km"] = f"{rocket_alt_km:.6f}" if in_window and rocket_alt_km is not None else ""
+            if args.mission == "GNEISS":
+                maglat = interpolate_gneiss_maglat(gneiss_maglat_lookup, csv_key, tg_time)
+                row[f"{csv_key}_maglat"] = f"{maglat:.8f}" if in_window and maglat is not None else ""
             for alt in alts:
                 if in_window:
                     alt_lookup = traj_lookups_by_alt[alt][key]

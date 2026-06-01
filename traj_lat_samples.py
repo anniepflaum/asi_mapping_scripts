@@ -20,6 +20,7 @@ from core.missions import (
     mission_output_dir,
     resolve_mission_and_date,
     rocket_launch_start,
+    ROCKET_TIME_WINDOWS,
     trajectory_config_tuples,
     validate_color_and_sites,
 )
@@ -47,6 +48,11 @@ def build_csv_output_path(mission, date_str, start, end, step, color):
     return mission_output_dir(mission, color=color, date=date_str) / f"{csv_prefix(mission, color)}_{date_str}_{start_tok}_{end_tok}_step{step_tok}.csv"
 
 
+def build_rocket_csv_output_path(mission, date_str, rocket_tag, start, end, step, color):
+    output_path = build_csv_output_path(mission, date_str, start, end, step, color)
+    return output_path.with_name(f"{output_path.stem}_{rocket_tag}{output_path.suffix}")
+
+
 def parse_lat_sample_filename(csv_path, prefix):
     pattern = (
         rf"^{re.escape(prefix)}_(\d{{8}})_"
@@ -70,23 +76,35 @@ def format_elapsed_seconds(seconds):
     return f"{float(seconds):.6f}".rstrip("0").rstrip(".")
 
 
-def requested_time_tokens(start_dt, end_dt, step):
+def time_since_header_start(header_value, date, fallback_dt):
+    prefix = "time since "
+    if not str(header_value).startswith(prefix):
+        return fallback_dt
+    try:
+        return parse_date_and_time(date, str(header_value)[len(prefix) :])
+    except ValueError:
+        return fallback_dt
+
+
+def requested_time_tokens_since(base_dt, start_dt, end_dt, step):
     tokens = []
     t = start_dt
     step_td = dt.timedelta(seconds=step)
     while t <= end_dt:
-        tokens.append(format_elapsed_seconds((t - start_dt).total_seconds()))
+        tokens.append(format_elapsed_seconds((t - base_dt).total_seconds()))
         t += step_td
     return tokens
 
 
-def csv_contains_requested_time_tokens(csv_path, requested_tokens):
+def csv_contains_requested_time_tokens(csv_path, date, start_dt, end_dt, step, fallback_base_dt):
     try:
         with open(csv_path, "r", encoding="utf-8", newline="") as fh:
             reader = csv.reader(fh)
             header = next(reader, None)
             if not header or not header[0].startswith("time since "):
                 return False
+            base_dt = time_since_header_start(header[0], date, fallback_base_dt)
+            requested_tokens = requested_time_tokens_since(base_dt, start_dt, end_dt, step)
             available = {row[0] for row in reader if row}
     except Exception:
         return False
@@ -96,8 +114,11 @@ def csv_contains_requested_time_tokens(csv_path, requested_tokens):
 def find_reusable_lat_sample_csvs(preferred_path, prefix, date, start, end, step, rocket=None):
     start_dt = parse_date_and_time(date, start)
     end_dt = parse_date_and_time(date, end)
-    requested_tokens = requested_time_tokens(start_dt, end_dt, step)
-    if rocket is not None and preferred_path.exists() and csv_contains_requested_time_tokens(preferred_path, requested_tokens):
+    if (
+        rocket is not None
+        and preferred_path.exists()
+        and csv_contains_requested_time_tokens(preferred_path, date, start_dt, end_dt, step, start_dt)
+    ):
         return [preferred_path]
 
     candidates = []
@@ -114,7 +135,7 @@ def find_reusable_lat_sample_csvs(preferred_path, prefix, date, start, end, step
             continue
         if candidate_start_dt > start_dt or candidate_end_dt < end_dt:
             continue
-        if csv_contains_requested_time_tokens(candidate, requested_tokens):
+        if csv_contains_requested_time_tokens(candidate, date, start_dt, end_dt, step, candidate_start_dt):
             span_seconds = (candidate_end_dt - candidate_start_dt).total_seconds()
             candidates.append((span_seconds, parsed["step"], parsed.get("suffix") or "", candidate))
     if not candidates:
@@ -127,6 +148,11 @@ def find_reusable_lat_sample_csvs(preferred_path, prefix, date, start, end, step
     for span_seconds, parsed_step, suffix, candidate in candidates:
         best_by_suffix.setdefault(suffix, (span_seconds, parsed_step, candidate))
     return [item[2] for _suffix, item in sorted(best_by_suffix.items())]
+
+
+def rocket_window_for_tag(tag, fallback_start, fallback_end):
+    rocket = rocket_id_from_tag(tag)
+    return ROCKET_TIME_WINDOWS.get(str(rocket), (fallback_start, fallback_end))
 
 
 def per_rocket_output_paths(output_path, traj_data):
@@ -198,19 +224,37 @@ def save_lat_sample_csv(output_path, traj_data, times, start_dt):
     return output_paths
 
 
+def save_single_lat_sample_csv(output_path, traj, times, start_dt):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    header = [f"time since {format_time_arg(start_dt)}"] + [f"{float(lat):.8f}" for lat in traj["lats"]]
+    brightness = np.asarray(traj["img"], dtype=float)
+    with open(output_path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(header)
+        for time_idx, sample_time in enumerate(times):
+            values = [
+                "" if not np.isfinite(value) else f"{float(value):.8g}"
+                for value in brightness[:, time_idx]
+            ]
+            writer.writerow([format_elapsed_seconds((sample_time - start_dt).total_seconds())] + values)
+    print(f"Saved latitude-sampled CSV to {output_path}")
+    return output_path
+
+
 def load_lat_sample_csv(csv_path, start_dt, date, rocket_hint=None):
     with open(csv_path, "r", encoding="utf-8", newline="") as fh:
         reader = csv.reader(fh)
         header = next(reader, None)
         if not header or len(header) < 2 or not header[0].startswith("time since "):
             raise ValueError(f"{csv_path} is not a latitude-sampled CSV")
+        base_dt = time_since_header_start(header[0], date, start_dt)
         lats = np.asarray([float(value) for value in header[1:]], dtype=float)
         rows = []
         times = []
         for row in reader:
             if not row:
                 continue
-            times.append(start_dt + dt.timedelta(seconds=float(row[0])))
+            times.append(base_dt + dt.timedelta(seconds=float(row[0])))
             values = [np.nan if value == "" else float(value) for value in row[1 : len(header)]]
             if len(values) < lats.size:
                 values.extend([np.nan] * (lats.size - len(values)))
@@ -324,23 +368,56 @@ def main():
     if end_dt < start_dt:
         ap.error("--end must be >= --start")
 
-    csv_output_path = build_csv_output_path(args.mission, args.date, args.start, args.end, args.step, args.color)
     if args.no_csv:
-        csv_paths = find_reusable_lat_sample_csvs(
-            csv_output_path,
-            csv_prefix(args.mission, args.color),
-            args.date,
-            args.start,
-            args.end,
-            args.step,
-            rocket=args.rocket,
-        )
+        traj_configs = trajectory_config_tuples(args.mission, date=args.date)
+        if args.rocket is not None:
+            traj_configs = [
+                cfg
+                for cfg in traj_configs
+                if cfg[2].replace(".", "").endswith(args.rocket) or str(cfg[1]).endswith(args.rocket)
+            ]
+            if not traj_configs:
+                ap.error(f"No trajectory is configured for --rocket {args.rocket}")
+
+        csv_paths = []
+        csv_plot_ranges = {}
+        for _key, tag, _label, _path in traj_configs:
+            rocket_start, rocket_end = rocket_window_for_tag(tag, args.start, args.end)
+            rocket_start_dt = max(parse_date_and_time(args.date, rocket_start), start_dt)
+            rocket_end_dt = min(parse_date_and_time(args.date, rocket_end), end_dt)
+            if rocket_end_dt < rocket_start_dt:
+                continue
+            rocket_start_arg = format_time_arg(rocket_start_dt)
+            rocket_end_arg = format_time_arg(rocket_end_dt)
+            rocket_output_path = build_rocket_csv_output_path(
+                args.mission,
+                args.date,
+                tag,
+                rocket_start_arg,
+                rocket_end_arg,
+                args.step,
+                args.color,
+            )
+            found = find_reusable_lat_sample_csvs(
+                rocket_output_path,
+                csv_prefix(args.mission, args.color),
+                args.date,
+                rocket_start_arg,
+                rocket_end_arg,
+                args.step,
+                rocket=tag,
+            )
+            csv_paths.extend(found)
+            for path in found:
+                csv_plot_ranges[path] = (rocket_start_dt, rocket_end_dt, tag)
+
         missing = [path for path in csv_paths if not path.exists()]
         if missing:
             ap.error(f"No reusable latitude-sampled CSV found for requested range; expected {missing[0]}")
         for csv_path in csv_paths:
-            csv_times, csv_traj = load_lat_sample_csv(csv_path, start_dt, args.date, rocket_hint=args.rocket)
-            save_minute_marker_plots(csv_path, [csv_traj], csv_times, start_dt, end_dt, args.color)
+            rocket_start_dt, rocket_end_dt, tag = csv_plot_ranges[csv_path]
+            csv_times, csv_traj = load_lat_sample_csv(csv_path, rocket_start_dt, args.date, rocket_hint=tag)
+            save_minute_marker_plots(csv_path, [csv_traj], csv_times, rocket_start_dt, rocket_end_dt, args.color)
         print("Plotted from existing CSV " + ", ".join(str(path) for path in csv_paths))
         return
 
@@ -383,41 +460,62 @@ def main():
             }
         )
 
-    times = []
-    step_td = dt.timedelta(seconds=args.step)
-    t = start_dt
-    frame_idx = 0
-    while t <= end_dt:
-        time_arg = format_time_arg(t)
-        imgs_raw = {}
-        for site in ["ARV", "VEE", "BVR"]:
-            if site not in selected_sites:
-                continue
-            try:
-                imgs_raw[site] = load_best_frame_from_cached_tiffs(
-                    site,
-                    tiff_metadata.get(site, []),
-                    t,
-                    frame_interval=frame_interval,
-                )
-            except Exception as exc:
-                print(f"{time_arg} {site}: frame load failed: {exc}")
+    for traj in traj_data:
+        rocket_start, rocket_end = rocket_window_for_tag(traj["tag"], args.start, args.end)
+        rocket_start_dt = parse_date_and_time(args.date, rocket_start)
+        rocket_end_dt = parse_date_and_time(args.date, rocket_end)
+        if rocket_start_dt < start_dt:
+            rocket_start_dt = start_dt
+            rocket_start = args.start
+        if rocket_end_dt > end_dt:
+            rocket_end_dt = end_dt
+            rocket_end = args.end
+        if rocket_end_dt < rocket_start_dt:
+            print(f"{traj['tag']}: requested range does not overlap rocket window; skipped.")
+            continue
 
-        for traj in traj_data:
+        traj["cols"] = []
+        times = []
+        step_td = dt.timedelta(seconds=args.step)
+        t = rocket_start_dt
+        frame_idx = 0
+        while t <= rocket_end_dt:
+            time_arg = format_time_arg(t)
+            imgs_raw = {}
+            for site in ["ARV", "VEE", "BVR"]:
+                if site not in selected_sites:
+                    continue
+                try:
+                    imgs_raw[site] = load_best_frame_from_cached_tiffs(
+                        site,
+                        tiff_metadata.get(site, []),
+                        t,
+                        frame_interval=frame_interval,
+                    )
+                except Exception as exc:
+                    print(f"{time_arg} {site}: frame load failed: {exc}")
+
             profile, _site = build_combined_profile(traj["lats"], traj["lons"], imgs_raw, samplers, selected_sites)
             traj["cols"].append(profile)
-        times.append(t)
+            times.append(t)
 
-        frame_idx += 1
-        if frame_idx % 50 == 0:
-            print(f"Processed {frame_idx} frames through {time_arg}")
-        t += step_td
+            frame_idx += 1
+            if frame_idx % 50 == 0:
+                print(f"{traj['tag']}: processed {frame_idx} frames through {time_arg}")
+            t += step_td
 
-    for traj in traj_data:
         traj["img"] = np.column_stack(traj["cols"])
-
-    save_lat_sample_csv(csv_output_path, traj_data, times, start_dt)
-    save_minute_marker_plots(csv_output_path, traj_data, times, start_dt, end_dt, args.color)
+        rocket_output_path = build_rocket_csv_output_path(
+            args.mission,
+            args.date,
+            traj["tag"],
+            rocket_start,
+            rocket_end,
+            args.step,
+            args.color,
+        )
+        save_single_lat_sample_csv(rocket_output_path, traj, times, rocket_start_dt)
+        save_minute_marker_plots(rocket_output_path, [traj], times, rocket_start_dt, rocket_end_dt, args.color)
 
 
 if __name__ == "__main__":

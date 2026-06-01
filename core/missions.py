@@ -156,8 +156,6 @@ def validate_color_and_sites(parser, mission, color, sites, giraff_message_site=
     """Apply mission-specific constraints to color/site arguments."""
     if mission_key(mission) != "GIRAFF":
         return
-    if str(color).lower() != "green":
-        parser.error("--mission GIRAFF only supports --color green")
     selected_sites = {site.upper() for site in sites}
     invalid_sites = sorted(selected_sites - set(GIRAFF_SITE_ACRONYMS))
     if invalid_sites:
