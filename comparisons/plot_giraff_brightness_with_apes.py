@@ -22,7 +22,7 @@ from core.time_utils import parse_date_and_time
 from core.traj_utils import get_launch_start_from_traj_csv
 
 
-APES_MINUTE_DIR = Path("/Users/anniepflaum/asi_mapping/apes_GIRAFF_plots/APES_GIR_1minplots")
+APES_MINUTE_DIR = Path("/Users/anniepflaum/lab317/asi_mapping/apes_GIRAFF_plots/APES_GIR_1minplots")
 APES_MINUTE_ORIGINS = {
     "380": 110.0,
     "381": 127.0,
@@ -38,7 +38,7 @@ APES_MINUTE_AXIS = {
 APES_CONFIG = {
     "380": {
         "date": "20250209",
-        "image": Path("/Users/anniepflaum/asi_mapping/apes_GIRAFF_plots/APES_GIR380_ov_pad.jpg"),
+        "image": Path("/Users/anniepflaum/lab317/asi_mapping/apes_GIRAFF_plots/APES_GIR380_ov_pad.jpg"),
         "xlim": (100.0, 520.0),
         "axis_left_frac": 323 / 2596,
         "axis_right_frac": 2269 / 2596,
@@ -47,7 +47,7 @@ APES_CONFIG = {
     },
     "381": {
         "date": "20250202",
-        "image": Path("/Users/anniepflaum/asi_mapping/apes_GIRAFF_plots/APES_GIR381_ov_pad.jpg"),
+        "image": Path("/Users/anniepflaum/lab317/asi_mapping/apes_GIRAFF_plots/APES_GIR381_ov_pad.jpg"),
         "xlim": (100.0, 520.0),
         "axis_left_frac": 323 / 2582,
         "axis_right_frac": 2248 / 2582,

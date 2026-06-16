@@ -18,7 +18,7 @@ except ImportError:
 
 
 CORE_DIR = Path(__file__).resolve().parent
-PKR_LOCAL_ROOT = Path("/Users/anniepflaum/asi_mapping/images")
+PKR_LOCAL_ROOT = Path("/Users/anniepflaum/lab317/asi_mapping/images")
 PKR_FILENAME_RE = re.compile(r"^PFRR_(\d{8})_(\d{6})_(0558|0630)\.png$", re.IGNORECASE)
 
 

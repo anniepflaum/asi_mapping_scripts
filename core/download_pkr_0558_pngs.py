@@ -83,7 +83,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         default=None,
-        help="Directory for downloaded PNGs; default: /Users/anniepflaum/asi_mapping/images/green/PKR/YYYYMMDD",
+        help="Directory for downloaded PNGs; default: /Users/anniepflaum/lab317/asi_mapping/images/green/PKR/YYYYMMDD",
     )
     parser.add_argument("--overwrite", action="store_true", help="Replace files that already exist")
     args = parser.parse_args()
@@ -96,7 +96,7 @@ def main():
     if end_dt < start_dt:
         parser.error("end time must be >= start time")
 
-    output_dir = Path(args.output_dir) if args.output_dir else Path("/Users/anniepflaum/asi_mapping/images/green/PKR") / start_dt.strftime("%Y%m%d")
+    output_dir = Path(args.output_dir) if args.output_dir else Path("/Users/anniepflaum/lab317/asi_mapping/images/green/PKR") / start_dt.strftime("%Y%m%d")
 
     files = []
     for directory_url in hourly_directory_urls(start_dt, end_dt):
