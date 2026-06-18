@@ -41,6 +41,7 @@ DEFAULT_AZ = Path("/Users/anniepflaum/Downloads/VEE_HERA_20260210_Az.FIT")
 DEFAULT_EL = Path("/Users/anniepflaum/Downloads/VEE_HERA_20260210_El.FIT")
 DEFAULT_DATE = "20260210"
 DEFAULT_TIME = "102800"
+HER_TIMESTAMP_OFFSET_SECONDS = 52.0
 DEFAULT_SITE_LAT = 67.050003
 DEFAULT_SITE_LON = -146.399994
 DEFAULT_BOUNDS = (-149.5, -144.5, 66.0, 68.0)
@@ -141,12 +142,25 @@ def output_path(time_arg):
     return mission_output_dir("GNEISS", color="green", date=DEFAULT_DATE) / f"HER_on_VEE_mapped_{DEFAULT_DATE}_{token}.png"
 
 
+def corrected_her_time(file_dt):
+    return file_dt + dt.timedelta(seconds=HER_TIMESTAMP_OFFSET_SECONDS)
+
+
+def her_file_time_from_corrected(corrected_dt):
+    return corrected_dt - dt.timedelta(seconds=HER_TIMESTAMP_OFFSET_SECONDS)
+
+
 def main():
     args = parse_args()
-    target_dt = parse_date_and_time(DEFAULT_DATE, args.time)
-    frame_idx, frame_dt, chunk_start, cadence_s, n_pages = frame_index_for_time(DEFAULT_TIFF, DEFAULT_DATE, target_dt)
+    args.date = DEFAULT_DATE
+    args.color = "green"
+    args.mission = "GNEISS"
+    target_dt = parse_date_and_time(args.date, args.time)
+    her_file_dt = her_file_time_from_corrected(target_dt)
+    frame_idx, frame_file_dt, chunk_start, cadence_s, n_pages = frame_index_for_time(DEFAULT_TIFF, args.date, her_file_dt)
+    frame_corrected_dt = corrected_her_time(frame_file_dt)
     her_frame = read_frame(DEFAULT_TIFF, frame_idx)
-    vee_frame = load_vee_frame(DEFAULT_DATE, target_dt)
+    vee_frame = load_vee_frame(args.date, target_dt)
     skymaps = load_skymaps({"VEE"}, color="green", mission="GNEISS", green_alt=DEFAULT_GREEN_ALT_KM)
     skymaps["HER"] = load_hera_skymap(DEFAULT_AZ, DEFAULT_EL, DEFAULT_SITE_LAT, DEFAULT_SITE_LON, DEFAULT_GREEN_ALT_KM)
     for site_skymap in skymaps.values():
@@ -155,8 +169,8 @@ def main():
     print(f"TIFF chunk start: {chunk_start.isoformat()}")
     print(f"Cadence: {cadence_s:.9f} s, pages: {n_pages}")
     print(
-        f"Selected frame {frame_idx + 1}/{n_pages} at {frame_dt.strftime('%H:%M:%S.%f')[:-3]} "
-        f"(target {target_dt.strftime('%H:%M:%S.%f')[:-3]})"
+        f"Selected HER frame {frame_idx + 1}/{n_pages} at corrected {frame_corrected_dt.strftime('%H:%M:%S.%f')[:-3]} "
+        f"(raw {frame_file_dt.strftime('%H:%M:%S.%f')[:-3]}, target corrected {target_dt.strftime('%H:%M:%S.%f')[:-3]})"
     )
 
     plot_map(
@@ -165,7 +179,7 @@ def main():
         {},
         output_path=output_path(args.time),
         map_time=args.time,
-        map_date=DEFAULT_DATE,
+        map_date=args.date,
         bounds=DEFAULT_BOUNDS,
         color="green",
         imgs_raw={"VEE": vee_frame, "HER": her_frame},

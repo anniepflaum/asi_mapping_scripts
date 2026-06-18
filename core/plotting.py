@@ -133,6 +133,36 @@ def draw_receivers(ax, receivers, axtrans):
         ax.text(receiver["lon"] + 0.12, receiver["lat"] + 0.05, receiver["acronym"], fontsize=8, color="black", zorder=10, bbox=dict(facecolor="white", alpha=0.7, edgecolor="none", pad=0.15), transform=axtrans)
 
 
+def draw_site_markers(ax, site_markers, axtrans):
+    for marker in site_markers or []:
+        lon = marker["lon"]
+        lat = marker["lat"]
+        label = marker.get("label", "Site")
+        zorder = marker.get("zorder", 12)
+        ax.scatter(
+            [lon],
+            [lat],
+            marker=marker.get("marker", "^"),
+            s=marker.get("size", 70),
+            color=marker.get("color", "yellow"),
+            edgecolors=marker.get("edgecolor", "black"),
+            linewidths=marker.get("linewidth", 0.9),
+            zorder=zorder,
+            label=label,
+            transform=axtrans,
+        )
+        ax.text(
+            lon + marker.get("label_dx", 0.05),
+            lat + marker.get("label_dy", 0.03),
+            label,
+            fontsize=marker.get("fontsize", 8),
+            color=marker.get("text_color", "black"),
+            zorder=zorder + 1,
+            bbox=dict(facecolor="white", alpha=0.75, edgecolor="none", pad=0.15),
+            transform=axtrans,
+        )
+
+
 def compute_receiver_ipps(receivers, rocket_geo, ipp_height_km):
     if (
         not receivers
@@ -415,7 +445,7 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", green_alt=None, upper_percentile=NORMALIZATION_UPPER_PERCENTILE):
+def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", green_alt=None, upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None):
     receivers = filter_receivers_for_mission(load_receivers(warn=print_warning), mission) if (plot_receivers or plot_ipps) else []
     if pretty:
         fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex, mapped_apex_height(color, green_alt=green_alt))
@@ -453,6 +483,7 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=Non
         draw_geodetic_trajectory(ax, load_geodetic_trajectory_context(map_time, mission=mission, date=map_date), axt, mission=mission)
     if plot_receivers:
         draw_receivers(ax, receivers, axt)
+    draw_site_markers(ax, site_markers, axt)
     brightnesses = sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw)
     brightness_markers = []
     if brightnesses:
