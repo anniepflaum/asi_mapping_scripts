@@ -7,6 +7,7 @@ import pymap3d as pm
 import h5py
 
 from core.constants import DEFAULT_GREEN_ALT_KM
+from core.paths import starmap_path
 
 
 #def azel2geo(centlat, centlon, az, el, mapalt_km=DEFAULT_GREEN_ALT_KM):
@@ -79,11 +80,11 @@ def normalize_lon(lon: np.ndarray, convention: str) -> np.ndarray:
 
 
 # Poker Flat (PKR)
-def load_PKR():
+def load_PKR(color="green"):
 
     site_lon, site_lat = [-147.43,   65.1192]
-    azdat = readsav('../starmaps/PKR/PKR_DASC_5577_20260210_RAW_FULL_Az.sav', python_dict=True)
-    eldat = readsav('../starmaps/PKR/PKR_DASC_5577_20260210_RAW_FULL_El.sav', python_dict=True)
+    azdat = readsav(starmap_path(color, "PKR", "PKR_DASC_5577_20260210_RAW_FULL_Az.sav"), python_dict=True)
+    eldat = readsav(starmap_path(color, "PKR", "PKR_DASC_5577_20260210_RAW_FULL_El.sav"), python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
     elmap = eldat[list(eldat.keys())[0]].copy()
 
@@ -95,12 +96,12 @@ def load_PKR():
 
 
 # Venetie (VEE)
-def load_VEE(mission="GNEISS"):
+def load_VEE(color="green", mission="GNEISS"):
 
     mission_key = str(mission).upper()
     site_lon, site_lat = [-146.407,  67.013]
     if mission_key == "GIRAFF":
-        with h5py.File('../starmaps/VEE/GIRAFF/sok_pixelcoords.h5', 'r') as fd:
+        with h5py.File(starmap_path(color, "VEE", "GIRAFF", "sok_pixelcoords.h5"), 'r') as fd:
             latmap = fd['Latitude'][()].copy()
             lonmap = fd['Longitude'][()].copy()
             azmap = np.rad2deg(fd['Azimuth'][()].copy())
@@ -108,8 +109,8 @@ def load_VEE(mission="GNEISS"):
             mask = fd['Mask'][()].copy().astype(bool)
         return site_lat, site_lon, azmap, elmap, mask, latmap, lonmap
 
-    azdat = readsav('../starmaps/VEE/GNEISS/VEE_GASI_20260210_050100_rot5_full_Az.sav', python_dict=True)
-    eldat = readsav('../starmaps/VEE/GNEISS/VEE_GASI_20260210_050100_rot5_full_El.sav', python_dict=True)
+    azdat = readsav(starmap_path(color, "VEE", "GNEISS", "VEE_GASI_20260210_050100_rot5_full_Az.sav"), python_dict=True)
+    eldat = readsav(starmap_path(color, "VEE", "GNEISS", "VEE_GASI_20260210_050100_rot5_full_El.sav"), python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
     elmap = eldat[list(eldat.keys())[0]].copy()
 
@@ -120,11 +121,11 @@ def load_VEE(mission="GNEISS"):
 
 
 # Beaver
-def load_BVR():
+def load_BVR(color="green"):
     site_lon, site_lat = [-147.4,    66.36]
 
-    azdat = readsav('../starmaps/BVR/BVR_20260210_090000_750_rot5_Az.sav', python_dict=True)
-    eldat = readsav('../starmaps/BVR/BVR_20260210_090000_750_rot5_El.sav', python_dict=True)
+    azdat = readsav(starmap_path(color, "BVR", "BVR_20260210_090000_750_rot5_Az.sav"), python_dict=True)
+    eldat = readsav(starmap_path(color, "BVR", "BVR_20260210_090000_750_rot5_El.sav"), python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
     elmap = eldat[list(eldat.keys())[0]].copy()
 
@@ -138,11 +139,11 @@ def load_ARV(color="green"):
     site_lon, site_lat = [-145.533,  68.127]
 
     if color == "red":
-        azmap = fits.getdata('../starmaps/ARV/ARV_GASI_630_20260209_Az.FIT').copy()
-        elmap = fits.getdata('../starmaps/ARV/ARV_GASI_630_20260209_El.FIT').copy()
+        azmap = fits.getdata(starmap_path(color, "ARV", "ARV_GASI_630_20260209_Az.FIT")).copy()
+        elmap = fits.getdata(starmap_path(color, "ARV", "ARV_GASI_630_20260209_El.FIT")).copy()
     else:
-        azdat = readsav('../starmaps/ARV/ARV_GASI_20260209_063700_rot5_full_Az.sav', python_dict=True)
-        eldat = readsav('../starmaps/ARV/ARV_GASI_20260209_063700_rot5_full_El.sav', python_dict=True)
+        azdat = readsav(starmap_path(color, "ARV", "ARV_GASI_20260209_063700_rot5_full_Az.sav"), python_dict=True)
+        eldat = readsav(starmap_path(color, "ARV", "ARV_GASI_20260209_063700_rot5_full_El.sav"), python_dict=True)
         azmap = azdat[list(azdat.keys())[0]].copy()
         elmap = eldat[list(eldat.keys())[0]].copy()
 

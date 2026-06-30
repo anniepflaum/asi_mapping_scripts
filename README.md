@@ -58,7 +58,14 @@ scripts/
 ../mapped/
 ../images/
 ../receivers.csv
-../starmaps/
+../starmap/
+  green/
+    ARV/
+    BVR/
+    PKR/
+    VEE/
+  red/
+    ARV/
 ```
 
 Important shared modules:
@@ -252,7 +259,7 @@ Expected workspace inputs:
 - `../trajectories/GIRAFF/36380_MAIN_PAYLOAD_GPS.xlsx`
 - `../trajectories/GIRAFF/36381_MAIN_PAYLOAD_GPS.xlsx`
 - `../receivers.csv`
-- `../starmaps/...`
+- `../starmap/{color}/{site}/...`
 - local TIFF archives under `../images/...` or the hard-coded GIRAFF source/cache paths in `core/tiff_utils.py`
 - coastline assets under `coast/`
 

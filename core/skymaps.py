@@ -13,7 +13,7 @@ def load_skymaps(selected_sites=None, color="green", mission="GNEISS", green_alt
         lat, lon, az, el, mask = skymap.load_ARV(color=color)
         skymaps["ARV"] = {"site_lat": lat, "site_lon": lon, "azmt": az, "elev": el, "mask": mask}
     if "VEE" in selected_sites:
-        vee_payload = skymap.load_VEE(mission=mission)
+        vee_payload = skymap.load_VEE(color=color, mission=mission)
         if len(vee_payload) == 7:
             lat, lon, az, el, mask, mapped_lat, mapped_lon = vee_payload
             skymaps["VEE"] = {
@@ -30,10 +30,10 @@ def load_skymaps(selected_sites=None, color="green", mission="GNEISS", green_alt
             lat, lon, az, el, mask = vee_payload
             skymaps["VEE"] = {"site_lat": lat, "site_lon": lon, "azmt": az, "elev": el, "mask": mask}
     if "BVR" in selected_sites:
-        lat, lon, az, el, mask = skymap.load_BVR()
+        lat, lon, az, el, mask = skymap.load_BVR(color=color)
         skymaps["BVR"] = {"site_lat": lat, "site_lon": lon, "azmt": az, "elev": el, "mask": mask}
     if "PKR" in selected_sites:
-        lat, lon, az, el, mask = skymap.load_PKR()
+        lat, lon, az, el, mask = skymap.load_PKR(color=color)
         skymaps["PKR"] = {"site_lat": lat, "site_lon": lon, "azmt": az, "elev": el, "mask": mask}
     map_alt_km = DEFAULT_RED_ALT_KM if str(color).lower() == "red" else (float(green_alt) if green_alt is not None else DEFAULT_GREEN_ALT_KM)
     for sm in skymaps.values():

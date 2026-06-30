@@ -123,6 +123,8 @@ def build_command(args, time_arg):
         cmd.append("--plot-ipps")
     if args.plot_geodetic_traj:
         cmd.append("--plot-geodetic-traj")
+    if args.plot_ezie:
+        cmd.append("--plot-ezie")
     return cmd
 
 
@@ -158,6 +160,7 @@ def main():
     ap.add_argument("--plot-receivers", action="store_true", help="Pass --plot-receivers through to map_asi_archive.py")
     ap.add_argument("--plot-ipps", action="store_true", help="Pass --plot-ipps through to map_asi_archive.py")
     ap.add_argument("--plot-geodetic-traj", action="store_true", help="Pass --plot-geodetic-traj through to map_asi_archive.py")
+    ap.add_argument("--plot-ezie", action="store_true", help="Pass --plot-ezie through to map_asi_archive.py")
     args = ap.parse_args()
     try:
         args.mission, args.date = resolve_mission_and_date(args.mission, args.rocket)

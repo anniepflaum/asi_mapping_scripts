@@ -183,7 +183,6 @@ def plot_ipps_timeseries(times, rows, receivers, rocket_labels, output_path, tit
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", default=None, help="Date YYYYMMDD")
     ap.add_argument("--start", default=None, help="Start time HHMMSS(.fraction); defaults to mission rocket window")
     ap.add_argument("--end", default=None, help="End time HHMMSS(.fraction); defaults to mission rocket window")
     ap.add_argument("--step", type=float, default=0.05, help="Step size in seconds")
@@ -198,8 +197,7 @@ def main():
     ap.add_argument("--no-csv", action="store_true", help="Skip CSV generation and plot from an existing CSV instead")
     args = ap.parse_args()
     args.mission = args.mission.upper()
-    if args.date is None:
-        args.date = default_date(args.mission)
+    args.date = default_date(args.mission)
     default_start, default_end = default_time_range(args.mission, args.date)
     if args.start is None:
         args.start = default_start

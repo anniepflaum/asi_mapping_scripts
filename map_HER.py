@@ -30,15 +30,16 @@ if str(SCRIPT_DIR) not in sys.path:
 from core.constants import DEFAULT_GREEN_ALT_KM, FRAME_INTERVAL_SECONDS_GREEN
 from core.generate_skymap import azel2geo
 from core.missions import mission_output_dir
+from core.paths import starmap_path
 from core.plotting import plot_map
 from core.skymaps import load_skymaps
 from core.tiff_utils import get_site_tiff_candidates, load_best_frame_from_tiffs
 from core.time_utils import parse_date_and_time, sanitize_time_for_filename
 
 
-DEFAULT_TIFF = Path("/Users/anniepflaum/Downloads/HER260210_10060306_16bit_X09.tif")
-DEFAULT_AZ = Path("/Users/anniepflaum/Downloads/VEE_HERA_20260210_Az.FIT")
-DEFAULT_EL = Path("/Users/anniepflaum/Downloads/VEE_HERA_20260210_El.FIT")
+DEFAULT_TIFF = Path("/Users/anniepflaum/lab317/asi_mapping/images/green/HER/HER260210_10060306_16bit_X09.tif")
+DEFAULT_AZ = starmap_path("green", "HER", "VEE_HERA_20260210_Az.FIT")
+DEFAULT_EL = starmap_path("green", "HER", "VEE_HERA_20260210_El.FIT")
 DEFAULT_DATE = "20260210"
 DEFAULT_TIME = "102800"
 HER_TIMESTAMP_OFFSET_SECONDS = 52.0

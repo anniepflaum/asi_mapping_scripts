@@ -15,21 +15,22 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from core.constants import DEFAULT_GREEN_ALT_KM
+from core.constants import DEFAULT_GREEN_ALT_KM, FRAME_INTERVAL_SECONDS_GREEN
 from core.masks import build_overlap_masks
 from core.missions import mission_output_dir, trajectory_configs, trajectory_display_labels
 from core.paths import WORKSPACE_DIR
-from core.series_utils import count_steps, format_time_arg, print_progress
+from core.series_utils import count_steps, format_time_arg, load_tiff_frame_with_metadata, print_progress
 from core.skymaps import load_skymaps
 from core.time_utils import parse_date_and_time, sanitize_time_for_filename
+from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import build_traj_lookup, lookup_traj_position
 
 
 SITES = ("ARV", "VEE", "BVR")
 DEFAULT_DATE = "20260210"
-DEFAULT_START = "094600"
-DEFAULT_END = "103000"
-DEFAULT_STEP_S = 120.0
+DEFAULT_START = "100000"
+DEFAULT_END = "104500"
+DEFAULT_STEP_S = 2.0
 SITE_CODES = {site: idx + 1 for idx, site in enumerate(SITES)}
 FILL_VALUE = np.float32(np.nan)
 
@@ -37,8 +38,8 @@ FILL_VALUE = np.float32(np.nan)
 def parse_args():
     ap = argparse.ArgumentParser(
         description=(
-            "Build one native-grid GNEISS ASI map file from ../images/green/kat TIFF "
-            "stacks, including timestamps, mapped pixel coordinates, and trajectory data."
+            "Build one native-grid GNEISS ASI map file from ../images/green/{site} TIFF "
+            "chunks, including timestamps, mapped pixel coordinates, and trajectory data."
         )
     )
     ap.add_argument("--date", default=DEFAULT_DATE, help="Image date as YYYYMMDD")
@@ -47,7 +48,7 @@ def parse_args():
     ap.add_argument("--step", type=float, default=DEFAULT_STEP_S, help="Output cadence in seconds")
     ap.add_argument("--color", choices=("green",), default="green", help="ASI color channel")
     ap.add_argument("--green-alt", type=float, default=DEFAULT_GREEN_ALT_KM, help="Mapped altitude in km")
-    ap.add_argument("--input-dir", type=Path, default=None, help="Input TIFF directory; default: ../images/green/kat")
+    ap.add_argument("--input-dir", type=Path, default=None, help="Input image root; default: ../images/green with site subfolders")
     ap.add_argument("--output", type=Path, default=None, help="Output NetCDF path")
     ap.add_argument(
         "--bounds",
@@ -86,27 +87,41 @@ def default_output_path(args):
     return mission_output_dir("GNEISS", color=args.color, date=args.date) / name
 
 
-def find_site_tiff(input_dir, site, date, color):
-    exact = input_dir / f"{site}_GNEISS_{color}_{date}_{DEFAULT_START}_{DEFAULT_END}.tiff"
-    if exact.exists():
-        return exact
-    matches = sorted(input_dir.glob(f"{site}_GNEISS_{color}_{date}_*.tif*"))
-    if not matches:
-        raise FileNotFoundError(f"No KAT TIFF found for {site} in {input_dir}")
-    return matches[0]
+def site_search_dirs(input_root, site):
+    if input_root is None:
+        return None
+    site_dir = input_root / site
+    if site_dir.exists():
+        return [str(site_dir)]
+    return [str(input_root)]
 
 
-def load_site_tiffs(input_dir, date, color, expected_frames):
+def load_site_tiffs(input_root, date, color):
     tiffs = {}
     for site in SITES:
-        path = find_site_tiff(input_dir, site, date, color)
-        with tifffile.TiffFile(path) as tif:
+        candidates = get_site_tiff_candidates(
+            site,
+            date,
+            color,
+            override_dirs=site_search_dirs(input_root, site),
+            mission="GNEISS",
+        )
+        metadata = build_tiff_metadata(candidates, FRAME_INTERVAL_SECONDS_GREEN)
+        if not metadata:
+            search_root = input_root if input_root is not None else WORKSPACE_DIR / "images" / color / site
+            raise FileNotFoundError(f"No TIFFs found for {site} in {search_root}")
+        first_path = metadata[0]["path"]
+        with tifffile.TiffFile(first_path) as tif:
             n_pages = len(tif.pages)
             shape = tif.pages[0].shape
             dtype = tif.pages[0].dtype
-        if n_pages < expected_frames:
-            raise ValueError(f"{path} has {n_pages} frames, but {expected_frames} timestamps were requested")
-        tiffs[site] = {"path": path, "n_pages": n_pages, "shape": shape, "dtype": str(dtype)}
+        tiffs[site] = {
+            "paths": [meta["path"] for meta in metadata],
+            "metadata": metadata,
+            "n_pages": sum(int(meta["n_frames"]) for meta in metadata),
+            "shape": shape,
+            "dtype": str(dtype),
+        }
     return tiffs
 
 
@@ -135,16 +150,13 @@ def derive_bounds(skymaps, valid_masks):
     )
 
 
-def read_tiff_page(path, page_idx):
-    with tifffile.TiffFile(path) as tif:
-        frame = tif.pages[page_idx].asarray()
-    if frame.ndim == 3:
-        frame = frame[:, :, 0]
-    return np.asarray(frame, dtype=np.float32)
-
-
-def masked_site_frame(tiffs, site, valid_masks, frame_idx):
-    frame = read_tiff_page(tiffs[site]["path"], frame_idx)
+def masked_site_frame(tiffs, site, valid_masks, sample_dt):
+    frame, _frame_info = load_tiff_frame_with_metadata(
+        site,
+        tiffs[site]["metadata"],
+        sample_dt,
+        frame_interval=FRAME_INTERVAL_SECONDS_GREEN,
+    )
     masked = np.full(frame.shape, FILL_VALUE, dtype=np.float32)
     valid = valid_masks[site] & np.isfinite(frame)
     masked[valid] = frame[valid]
@@ -274,7 +286,7 @@ def write_netcdf(path, args, times, skymaps, valid_masks, tiffs, traj, bounds):
         for frame_idx, sample_dt in enumerate(times):
             print_progress(frame_idx, total_steps, format_time_arg(sample_dt))
             for site_idx, site in enumerate(SITES):
-                brightness[frame_idx, site_idx, :, :] = masked_site_frame(tiffs, site, valid_masks, frame_idx)
+                brightness[frame_idx, site_idx, :, :] = masked_site_frame(tiffs, site, valid_masks, sample_dt)
         print_progress(len(times), total_steps, format_time_arg(times[-1]))
 
         ds.title = "GNEISS KAT mapped ASI brightness images and trajectories"
@@ -291,7 +303,7 @@ def write_netcdf(path, args, times, skymaps, valid_masks, tiffs, traj, bounds):
         ds.site_codes = json.dumps(SITE_CODES)
         ds.native_image_shape = json.dumps({"y": y_size, "x": x_size})
         ds.spatial_layout = "native_site_pixel_grids"
-        ds.source_tiffs = json.dumps({site: str(info["path"]) for site, info in tiffs.items()}, sort_keys=True)
+        ds.source_tiffs = json.dumps({site: [str(path) for path in info["paths"]] for site, info in tiffs.items()}, sort_keys=True)
         ds.source_tiff_frame_counts = json.dumps({site: int(info["n_pages"]) for site, info in tiffs.items()}, sort_keys=True)
         ds.trajectory_sources = json.dumps(traj["source_paths"], sort_keys=True)
         ds.history = "created by kat_mapped.py"
@@ -299,10 +311,10 @@ def write_netcdf(path, args, times, skymaps, valid_masks, tiffs, traj, bounds):
 
 def main():
     args = parse_args()
-    input_dir = args.input_dir or WORKSPACE_DIR / "images" / args.color / "kat"
+    input_root = args.input_dir or WORKSPACE_DIR / "images" / args.color
     output_path = args.output or default_output_path(args)
     times = build_times(args.date, args.start, args.end, args.step)
-    tiffs = load_site_tiffs(input_dir, args.date, args.color, len(times))
+    tiffs = load_site_tiffs(input_root, args.date, args.color)
 
     skymaps = load_skymaps(set(SITES), color=args.color, mission="GNEISS", green_alt=args.green_alt)
     build_overlap_masks(skymaps, map_alt_km=args.green_alt)

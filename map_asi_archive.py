@@ -96,6 +96,7 @@ def main():
     ap.add_argument("--plot-receivers", action="store_true", help="Plot receiver locations from receivers.csv on the map")
     ap.add_argument("--plot-ipps", action="store_true", help="Plot receiver ionospheric pierce points on the map")
     ap.add_argument("--plot-geodetic-traj", dest="plot_geodetic_traj", action="store_true", help="Overlay the rocket trajectories in geodetic coordinates as blue traces")
+    ap.add_argument("--plot-ezie", action="store_true", help="Overlay EZIE MEM trajectories mapped along magnetic field lines to 110 km")
     args = ap.parse_args()
     shared_norm = not args.no_shared_norm
     try:
@@ -210,6 +211,7 @@ def main():
         plot_ipps=args.plot_ipps,
         pretty=args.pretty,
         plot_geodetic_traj=args.plot_geodetic_traj,
+        plot_ezie=args.plot_ezie,
         mission=args.mission,
         green_alt=args.green_alt,
         upper_percentile=args.vmax,

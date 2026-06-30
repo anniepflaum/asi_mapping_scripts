@@ -12,6 +12,13 @@ import magcoordmap as mcm
 from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
 from core.constants import NORMALIZATION_UPPER_PERCENTILE
+from core.ezie import (
+    EZIE_MEM_COLORS,
+    EZIE_MEM_MARKERS,
+    EZIE_SPACECRAFT_LINESTYLES,
+    ezie_position_at_time,
+    load_ezie_mem_tracks,
+)
 from core.missions import mission_output_dir, trajectory_configs, trajectory_display_labels
 from core.paths import COAST_LAT_PATH, COAST_LON_PATH
 from core.plot_norm import choose_image_cmap, compute_linear_image_limits, compute_log_image_limits
@@ -393,6 +400,50 @@ def draw_geodetic_trajectory(ax, geodetic_traj_ctx, axtrans, mission="GNEISS"):
             ax.scatter(traj["lon_map"], traj["lat_map"], color=color, s=40, marker="o", transform=axtrans, zorder=7)
 
 
+def draw_ezie_trajectories(ax, map_time, axtrans):
+    try:
+        tracks = load_ezie_mem_tracks()
+    except FileNotFoundError as exc:
+        print_warning(f"EZIE MEM ephemeris file not found: {exc.filename}. EZIE overlay will be skipped.")
+        return
+    except ValueError as exc:
+        print_warning(f"Could not load EZIE MEM ephemerides: {exc}")
+        return
+
+    for track in tracks:
+        spacecraft = track["spacecraft"]
+        mem_index = track["mem_index"]
+        color = EZIE_MEM_COLORS.get(mem_index, "tab:gray")
+        linestyle = EZIE_SPACECRAFT_LINESTYLES.get(spacecraft, "-")
+        marker = EZIE_MEM_MARKERS.get(mem_index, "o")
+        label = track["label"]
+        ax.plot(
+            track["lon"],
+            track["lat"],
+            color=color,
+            linestyle=linestyle,
+            linewidth=1.1,
+            alpha=0.9,
+            label=f"{label} trajectory",
+            zorder=6.5,
+            transform=axtrans,
+        )
+        lat_map, lon_map = ezie_position_at_time(track, map_time)
+        if lat_map is not None and lon_map is not None:
+            ax.scatter(
+                lon_map,
+                lat_map,
+                color=color,
+                edgecolors="black",
+                linewidths=0.5,
+                s=42,
+                marker=marker,
+                label=f"{label} at map time",
+                zorder=8.5,
+                transform=axtrans,
+            )
+
+
 def sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw):
     brightnesses = {}
     if imgs_raw is not None:
@@ -406,10 +457,10 @@ def sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw):
     return brightnesses
 
 
-def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default_with_args, default_without_args, brightness_markers=None, shared_norm=True, mission="GNEISS"):
+def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default_with_args, default_without_args, brightness_markers=None, shared_norm=True, mission="GNEISS", legend_loc="upper right"):
     ax.text(0.99, 0.01, label_str, transform=ax.transAxes, fontsize=12, color="w", ha="right", va="bottom", bbox=dict(facecolor="black", alpha=0.5, boxstyle="round,pad=0.2"))
     ax.set_title(f"Mapped ASIs and {mission} trajectory ({color} channel)")
-    ax.legend(loc="upper right")
+    ax.legend(loc=legend_loc)
     if im_handle is not None:
         cax = fig.add_subplot(gs[:, 1])
         cbar = fig.colorbar(im_handle, cax=cax, orientation="vertical")
@@ -445,7 +496,7 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", green_alt=None, upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None):
+def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", green_alt=None, upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None, plot_ezie=False):
     receivers = filter_receivers_for_mission(load_receivers(warn=print_warning), mission) if (plot_receivers or plot_ipps) else []
     if pretty:
         fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex, mapped_apex_height(color, green_alt=green_alt))
@@ -481,6 +532,8 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=Non
     draw_trajectory_and_ipps(ax, traj_ctx, axt, mission=mission, date=map_date)
     if plot_geodetic_traj:
         draw_geodetic_trajectory(ax, load_geodetic_trajectory_context(map_time, mission=mission, date=map_date), axt, mission=mission)
+    if plot_ezie:
+        draw_ezie_trajectories(ax, map_time, axt)
     if plot_receivers:
         draw_receivers(ax, receivers, axt)
     draw_site_markers(ax, site_markers, axt)
@@ -503,4 +556,5 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=Non
         brightness_markers=brightness_markers,
         shared_norm=shared_norm,
         mission=mission,
+        legend_loc="upper left" if plot_ezie else "upper right",
     )
