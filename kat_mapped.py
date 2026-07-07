@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export KAT ASI mapped brightness images and trajectory data to one NetCDF file."""
+"""Export ASI mapped brightness images and trajectory data to one NetCDF file."""
 
 import argparse
 import datetime as dt

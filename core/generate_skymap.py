@@ -109,8 +109,14 @@ def load_VEE(color="green", mission="GNEISS"):
             mask = fd['Mask'][()].copy().astype(bool)
         return site_lat, site_lon, azmap, elmap, mask, latmap, lonmap
 
-    azdat = readsav(starmap_path(color, "VEE", "GNEISS", "VEE_GASI_20260210_050100_rot5_full_Az.sav"), python_dict=True)
-    eldat = readsav(starmap_path(color, "VEE", "GNEISS", "VEE_GASI_20260210_050100_rot5_full_El.sav"), python_dict=True)
+    if str(color).lower() == "red":
+        az_path = starmap_path(color, "VEE", "VEE_GASI_630_20260210_080000_asistarcalibration_full_Az.sav")
+        el_path = starmap_path(color, "VEE", "VEE_GASI_630_20260210_080000_asistarcalibration_full_El.sav")
+    else:
+        az_path = starmap_path(color, "VEE", "GNEISS", "VEE_GASI_20260210_050100_rot5_full_Az.sav")
+        el_path = starmap_path(color, "VEE", "GNEISS", "VEE_GASI_20260210_050100_rot5_full_El.sav")
+    azdat = readsav(az_path, python_dict=True)
+    eldat = readsav(el_path, python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
     elmap = eldat[list(eldat.keys())[0]].copy()
 
@@ -124,8 +130,14 @@ def load_VEE(color="green", mission="GNEISS"):
 def load_BVR(color="green"):
     site_lon, site_lat = [-147.4,    66.36]
 
-    azdat = readsav(starmap_path(color, "BVR", "BVR_20260210_090000_750_rot5_Az.sav"), python_dict=True)
-    eldat = readsav(starmap_path(color, "BVR", "BVR_20260210_090000_750_rot5_El.sav"), python_dict=True)
+    if str(color).lower() == "red":
+        az_path = starmap_path(color, "BVR", "BVR_GASI_630_20260210_051800_asistarcalibration_full_Az.sav")
+        el_path = starmap_path(color, "BVR", "BVR_GASI_630_20260210_051800_asistarcalibration_full_El.sav")
+    else:
+        az_path = starmap_path(color, "BVR", "BVR_20260210_090000_750_rot5_Az.sav")
+        el_path = starmap_path(color, "BVR", "BVR_20260210_090000_750_rot5_El.sav")
+    azdat = readsav(az_path, python_dict=True)
+    eldat = readsav(el_path, python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
     elmap = eldat[list(eldat.keys())[0]].copy()
 

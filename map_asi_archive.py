@@ -85,6 +85,7 @@ def main():
     )
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling for ASI intensity")
     ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
+    ap.add_argument("--render", choices=["auto", "pcolor", "points", "regrid"], default="auto", help="Image rendering mode. auto uses regrid for red and pcolor otherwise")
     ap.add_argument("--vmax", type=float, default=NORMALIZATION_UPPER_PERCENTILE, help="Upper percentile used as vmax for ASI normalization")
     ap.add_argument(
         "--no-shared-norm",
@@ -215,6 +216,7 @@ def main():
         mission=args.mission,
         green_alt=args.green_alt,
         upper_percentile=args.vmax,
+        render_mode=args.render,
     )
 
     tocall = time.time()

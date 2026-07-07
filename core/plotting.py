@@ -7,6 +7,7 @@ import matplotlib as mpl
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.interpolate import griddata
 
 import magcoordmap as mcm
 from core.brightness import best_rocket_brightness
@@ -343,22 +344,103 @@ def setup_pretty_axes(imgs, bounds, apex, apex_height):
     return fig, gs, ax, ax1, axtrans, axtrans1
 
 
-def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, shared_vmin, shared_vmax, shared_image_norm, site_limits, site_norms, shared_norm, axtrans, axtrans1):
+def draw_image_pcolor(axis, lon, lat, image, image_cmap, image_norm, vmin, vmax, transform, zorder=3):
+    if image_norm is None and vmin is None:
+        return axis.pcolor(lon, lat, image, cmap=image_cmap, zorder=zorder, transform=transform)
+    if image_norm is None:
+        return axis.pcolor(lon, lat, image, cmap=image_cmap, vmin=vmin, vmax=vmax, zorder=zorder, transform=transform)
+    return axis.pcolor(lon, lat, image, cmap=image_cmap, norm=image_norm, zorder=zorder, transform=transform)
+
+
+def draw_image_points(axis, lon, lat, image, image_cmap, image_norm, vmin, vmax, transform, zorder=3):
+    valid = np.isfinite(lon) & np.isfinite(lat) & np.isfinite(image)
+    if not np.any(valid):
+        return None
+    kwargs = {
+        "c": image[valid],
+        "cmap": image_cmap,
+        "s": 0.25,
+        "marker": "s",
+        "linewidths": 0,
+        "edgecolors": "none",
+        "rasterized": True,
+        "zorder": zorder,
+        "transform": transform,
+    }
+    if image_norm is None:
+        if vmin is not None:
+            kwargs.update({"vmin": vmin, "vmax": vmax})
+    else:
+        kwargs["norm"] = image_norm
+    return axis.scatter(lon[valid], lat[valid], **kwargs)
+
+
+def axis_lon_lat_extent(axis, transform):
+    if isinstance(transform, ccrs.CRS):
+        return axis.get_extent(crs=ccrs.PlateCarree())
+    lon_min, lon_max = axis.get_xlim()
+    lat_min, lat_max = axis.get_ylim()
+    return lon_min, lon_max, lat_min, lat_max
+
+
+def regular_grid_for_axis(axis, transform, max_dim=900):
+    lon_min, lon_max, lat_min, lat_max = axis_lon_lat_extent(axis, transform)
+    lon_span = max(lon_max - lon_min, 1e-6)
+    lat_span = max(lat_max - lat_min, 1e-6)
+    scale = max(lon_span, lat_span)
+    n_lon = max(100, int(np.ceil(max_dim * lon_span / scale)))
+    n_lat = max(100, int(np.ceil(max_dim * lat_span / scale)))
+    grid_lon = np.linspace(lon_min, lon_max, n_lon)
+    grid_lat = np.linspace(lat_min, lat_max, n_lat)
+    return np.meshgrid(grid_lon, grid_lat)
+
+
+def draw_image_regrid(axis, lon, lat, image, image_cmap, image_norm, vmin, vmax, transform, zorder=3):
+    valid = np.isfinite(lon) & np.isfinite(lat) & np.isfinite(image)
+    if np.count_nonzero(valid) < 3:
+        return None
+    grid_lon, grid_lat = regular_grid_for_axis(axis, transform)
+    points = np.column_stack((lon[valid], lat[valid]))
+    try:
+        gridded = griddata(points, image[valid], (grid_lon, grid_lat), method="linear")
+    except Exception as exc:
+        print_warning(f"Linear image regridding failed ({exc}); falling back to nearest-neighbor regridding.")
+        gridded = griddata(points, image[valid], (grid_lon, grid_lat), method="nearest")
+
+    kwargs = {
+        "cmap": image_cmap,
+        "shading": "auto",
+        "zorder": zorder,
+        "transform": transform,
+    }
+    if image_norm is None:
+        if vmin is not None:
+            kwargs.update({"vmin": vmin, "vmax": vmax})
+    else:
+        kwargs["norm"] = image_norm
+    return axis.pcolormesh(grid_lon, grid_lat, gridded, **kwargs)
+
+
+def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, shared_vmin, shared_vmax, shared_image_norm, site_limits, site_norms, shared_norm, axtrans, axtrans1, render_mode="pcolor"):
     im_handle = None
     for site in imgs.keys():
+        lon = skymaps[site]["lon"]
+        lat = skymaps[site]["lat"]
         main_img = main_images[site]
         side_img = side_images[site]
         vmin, vmax = site_limits[site] if not shared_norm else (shared_vmin, shared_vmax)
         image_norm = site_norms[site] if not shared_norm else shared_image_norm
-        if image_norm is None and vmin is None:
-            im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, zorder=3, transform=axtrans)
-            ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, transform=axtrans1[site])
-        elif image_norm is None:
-            im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, vmin=vmin, vmax=vmax, zorder=3, transform=axtrans)
-            ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, vmin=vmin, vmax=vmax, transform=axtrans1[site])
+        if render_mode == "points":
+            main_handle = draw_image_points(ax, lon, lat, main_img, image_cmap, image_norm, vmin, vmax, axtrans)
+            draw_image_points(ax1[site], lon, lat, side_img, image_cmap, image_norm, vmin, vmax, axtrans1[site])
+        elif render_mode == "regrid":
+            main_handle = draw_image_regrid(ax, lon, lat, main_img, image_cmap, image_norm, vmin, vmax, axtrans)
+            draw_image_regrid(ax1[site], lon, lat, side_img, image_cmap, image_norm, vmin, vmax, axtrans1[site])
         else:
-            im_handle = ax.pcolor(skymaps[site]["lon"], skymaps[site]["lat"], main_img, cmap=image_cmap, norm=image_norm, zorder=3, transform=axtrans)
-            ax1[site].pcolor(skymaps[site]["lon"], skymaps[site]["lat"], side_img, cmap=image_cmap, norm=image_norm, transform=axtrans1[site])
+            main_handle = draw_image_pcolor(ax, lon, lat, main_img, image_cmap, image_norm, vmin, vmax, axtrans)
+            draw_image_pcolor(ax1[site], lon, lat, side_img, image_cmap, image_norm, vmin, vmax, axtrans1[site])
+        if main_handle is not None:
+            im_handle = main_handle
     return im_handle
 
 
@@ -496,7 +578,7 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", green_alt=None, upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None, plot_ezie=False):
+def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", green_alt=None, upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None, plot_ezie=False, render_mode="auto"):
     receivers = filter_receivers_for_mission(load_receivers(warn=print_warning), mission) if (plot_receivers or plot_ipps) else []
     if pretty:
         fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex, mapped_apex_height(color, green_alt=green_alt))
@@ -511,6 +593,9 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=Non
         upper_percentile=upper_percentile,
     )
     image_cmap = choose_image_cmap(colorbar_color, color)
+    resolved_render_mode = "regrid" if render_mode == "auto" and str(color).lower() == "red" else render_mode
+    if resolved_render_mode == "auto":
+        resolved_render_mode = "pcolor"
     im_handle = draw_images(
         ax,
         ax1,
@@ -527,6 +612,7 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=Non
         shared_norm,
         axt,
         axt1,
+        render_mode=resolved_render_mode,
     )
     traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps, mission=mission, date=map_date, green_alt=green_alt)
     draw_trajectory_and_ipps(ax, traj_ctx, axt, mission=mission, date=map_date)
