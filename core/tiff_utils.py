@@ -15,7 +15,7 @@ from core.paths import WORKSPACE_DIR
 
 
 GIRAFF_GREEN_CACHE_DIR = WORKSPACE_DIR / "images" / "green" / "VEE" / "GIRAFF"
-GIRAFF_RED_CACHE_DIR = WORKSPACE_DIR / "images" / "red" / "VEE" / "GIRAFF"
+GIRAFF_RED_CACHE_DIR = WORKSPACE_DIR / "images" / "red" / "6300" / "VEE" / "GIRAFF"
 GIRAFF_BLUE_CACHE_DIR = WORKSPACE_DIR / "images" / "blue" / "VEE" / "GIRAFF"
 
 GIRAFF_TIFF_PATHS_BY_COLOR_DATE = {
@@ -264,13 +264,28 @@ def get_giraff_tiff_candidates(date_str, color="green", override_dirs=None):
     return [str(tiff_path)]
 
 
-def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission="GNEISS"):
+def red_image_dirs(site, mission, red_wavelength="6300"):
+    wavelength = str(red_wavelength or "6300")
+    mission_key = str(mission).upper()
+    dirs = [f"../images/red/{wavelength}/{site}"]
+    if site == "VEE":
+        dirs.append(f"../images/red/{wavelength}/VEE/{mission_key}")
+    if wavelength == "6300":
+        dirs.append(f"../images/red/{site}")
+        if site == "VEE":
+            dirs.append(f"../images/red/VEE/{mission_key}")
+    return dirs
+
+
+def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission="GNEISS", red_wavelength="6300"):
     """
     Return candidate TIFF paths for a site.
     Priority:
     1) Explicit override directories if provided.
     2) Auto-discovered TIFFs in ../images/<COLOR>/<SITE>/.
-       VEE green TIFFs may also live in ../images/<COLOR>/VEE/GNEISS/.
+       Red TIFFs default to ../images/red/6300/<SITE>/ and may be selected
+       from ../images/red/<WAVELENGTH>/<SITE>/.
+       VEE TIFFs may also live in a mission subdirectory.
     """
     if isinstance(override_dirs, str):
         override_dirs = [override_dirs]
@@ -278,8 +293,14 @@ def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission=
         return get_giraff_tiff_candidates(date_str, color=color, override_dirs=override_dirs)
 
     site_prefixes = [site]
-    dirs_to_search = list(override_dirs) if override_dirs else [f"../images/{color}/{site}"]
-    if site == "VEE":
+    color_key = normalize_color(color)
+    if override_dirs:
+        dirs_to_search = list(override_dirs)
+    elif color_key == "red":
+        dirs_to_search = red_image_dirs(site, mission, red_wavelength=red_wavelength)
+    else:
+        dirs_to_search = [f"../images/{color}/{site}"]
+    if site == "VEE" and color_key != "red":
         alt_dir = f"../images/{color}/VEE/{str(mission).upper()}"
         if alt_dir not in dirs_to_search:
             dirs_to_search.append(alt_dir)

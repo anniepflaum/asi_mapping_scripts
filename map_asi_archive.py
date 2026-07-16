@@ -32,7 +32,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from core.calibration import BACKGROUND_EDGE_BUFFER_PX, calibrate_green_image, green_calibration_factor
+from core.calibration import BACKGROUND_EDGE_BUFFER_PX, calibrate_image, calibration_factor
 from core.masks import build_overlap_masks
 from core.constants import (
     FRAME_INTERVAL_SECONDS_GREEN,
@@ -61,15 +61,13 @@ apex = Apex()
 
 
 def calibrate_image_for_map(site, im_raw, skymaps, color):
-    if str(color).lower() != "green":
-        return im_raw, None
-    calibrated, bg = calibrate_green_image(site, im_raw, skymaps[site]["mask"], edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX)
+    calibrated, bg = calibrate_image(site, im_raw, skymaps[site]["mask"], color, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX)
     if calibrated is None:
-        print(f"{site}: no green calibration factor configured; using raw counts.")
+        print(f"{site}: no {color} calibration factor configured; using raw counts.")
         return im_raw, None
     print(
-        f"{site}: calibrated green image using bg={bg['center']:.2f} counts, "
-        f"sigma={bg['sigma']:.2f}, factor={green_calibration_factor(site):g} R s/count"
+        f"{site}: calibrated {color} image using bg={bg['center']:.2f} counts, "
+        f"sigma={bg['sigma']:.2f}, factor={calibration_factor(site, color):g} R s/count"
     )
     return calibrated, bg
 
@@ -88,6 +86,7 @@ def main():
     ap.add_argument("--sites", nargs='*', default=None, help="List of sites to process (default: mission-specific sites)")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use for trajectories and mission-specific site assets")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel for TIFF lookup and frame timing")
+    ap.add_argument("--red-wavelength", choices=["6300", "8446"], default="6300", help="Red-channel wavelength directory to use; default preserves the 6300 workflow")
     ap.add_argument(
         "--bounds",
         nargs=4,
@@ -124,6 +123,8 @@ def main():
         parse_hhmmss_fractional(args.time)
     except ValueError as exc:
         ap.error(f"--time {exc}")
+    if args.color == "red" and args.red_wavelength != "6300":
+        ap.error("red calibration factors are currently configured for 6300 only; use --red-wavelength 6300")
     if args.bounds is not None:
         lon_min, lon_max, lat_min, lat_max = args.bounds
         if lon_min >= lon_max or lat_min >= lat_max:
@@ -162,7 +163,13 @@ def main():
         if site not in selected_sites:
             continue
         try:
-            tiff_candidates = get_site_tiff_candidates(site, date, args.color, mission=args.mission)
+            tiff_candidates = get_site_tiff_candidates(
+                site,
+                date,
+                args.color,
+                mission=args.mission,
+                red_wavelength=args.red_wavelength,
+            )
             im_raw, _im_display = load_best_frame_from_tiffs(
                 site,
                 tiff_candidates,
@@ -214,7 +221,7 @@ def main():
         mission=args.mission,
         upper_percentile=args.vmax,
         render_mode=args.render,
-        colorbar_label="Rayleighs" if args.color == "green" else None,
+        colorbar_label="Rayleighs",
     )
 
     tocall = time.time()

@@ -5,7 +5,7 @@ from scipy.ndimage import distance_transform_edt
 from scipy.optimize import curve_fit
 from skimage.restoration import estimate_sigma
 
-from core.constants import FRAME_INTERVAL_SECONDS_GREEN
+from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 
 
 GREEN_RAYLEIGH_SECONDS_PER_COUNT = {
@@ -13,7 +13,19 @@ GREEN_RAYLEIGH_SECONDS_PER_COUNT = {
     "VEE": 35.0,
     "BVR": 57.0,
 }
-GREEN_EXPOSURE_TIME_S = FRAME_INTERVAL_SECONDS_GREEN
+RED_RAYLEIGH_SECONDS_PER_COUNT = {
+    "ARV": 23.0,
+    "VEE": 17.0,
+    "BVR": 18.0,
+}
+RAYLEIGH_SECONDS_PER_COUNT_BY_COLOR = {
+    "green": GREEN_RAYLEIGH_SECONDS_PER_COUNT,
+    "red": RED_RAYLEIGH_SECONDS_PER_COUNT,
+}
+EXPOSURE_TIME_S_BY_COLOR = {
+    "green": FRAME_INTERVAL_SECONDS_GREEN,
+    "red": FRAME_INTERVAL_SECONDS_RED,
+}
 BACKGROUND_EDGE_BUFFER_PX = 80.0
 
 
@@ -92,16 +104,31 @@ def estimate_corner_background(im, mask):
     }
 
 
-def green_calibration_factor(site):
-    return GREEN_RAYLEIGH_SECONDS_PER_COUNT.get(str(site).upper())
+def calibration_factor(site, color):
+    return RAYLEIGH_SECONDS_PER_COUNT_BY_COLOR.get(str(color).lower(), {}).get(str(site).upper())
 
 
-def calibrate_green_image(site, im, mask, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX):
-    factor = green_calibration_factor(site)
+def exposure_time_s(color):
+    return EXPOSURE_TIME_S_BY_COLOR.get(str(color).lower())
+
+
+def calibrate_image(site, im, mask, color, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX):
+    factor = calibration_factor(site, color)
+    exposure = exposure_time_s(color)
+    if exposure is None:
+        return None, None
     if factor is None:
         return None, None
     fit_mask = buffered_corner_mask(mask, edge_buffer_px=edge_buffer_px)
     bg = estimate_corner_background(im, fit_mask)
     dn = np.asarray(im, dtype=np.float32) - float(bg["center"])
-    rayleighs = (dn / float(GREEN_EXPOSURE_TIME_S)) * float(factor)
+    rayleighs = (dn / float(exposure)) * float(factor)
     return rayleighs.astype(np.float32), bg
+
+
+def green_calibration_factor(site):
+    return calibration_factor(site, "green")
+
+
+def calibrate_green_image(site, im, mask, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX):
+    return calibrate_image(site, im, mask, "green", edge_buffer_px=edge_buffer_px)

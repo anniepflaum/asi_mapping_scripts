@@ -88,6 +88,8 @@ def build_command(args, time_arg):
         args.mission,
         "--color",
         args.color,
+        "--red-wavelength",
+        args.red_wavelength,
         "--colorbar-color",
         args.colorbar_color,
         "--colorbar-scale",
@@ -125,6 +127,7 @@ def main():
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to pass to map_asi_archive.py")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
+    ap.add_argument("--red-wavelength", choices=["6300", "8446"], default="6300", help="Red-channel wavelength directory to pass through to map_asi_archive.py")
     ap.add_argument(
         "--bounds",
         nargs=4,
