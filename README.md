@@ -72,24 +72,16 @@ Important shared modules:
 - `core/missions.py`: mission defaults, trajectory configs, receiver sets, output dirs
 - `core/receivers.py`: receiver CSV loading and mission filtering
 - `core/paths.py`: filesystem constants only
-- `core/plot_norm.py`: shared and reference normalization helpers
+- `core/plot_norm.py`: shared image color-limit helpers
 - `core/tiff_utils.py`: TIFF/cache discovery and nearest-frame loading
 - `core/traj_utils.py`: trajectory parsing, mapping, and lookup
 - `core/plotting.py`: map plotting and trajectory/IPP overlays
 
 ## Normalization
 
-`--shared-norm` is enabled by default in both map scripts. It normalizes all
-selected sites against one reference frame, not independently per timestamp.
-The flag is still accepted, but there is no `--no-shared-norm` option.
-
-Reference normalization times:
-- GNEISS: `core.constants.REFERENCE_NORMALIZATION_TIME`
-- GIRAFF `20250202` / rocket `381`: `071130`
-- GIRAFF `20250209` / rocket `380`: `083600`
-
-`traj_brightness_series.py` also uses the GIRAFF reference normalization time
-when writing and plotting GIRAFF brightness series.
+`--shared-norm` is enabled by default in both map scripts. It uses one color
+scale across the selected sites for the requested timestamp. It does not use a
+fixed reference timestamp.
 
 ## Default Time Ranges
 

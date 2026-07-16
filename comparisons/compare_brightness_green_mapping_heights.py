@@ -23,7 +23,7 @@ PLOT_CONFIGS = [
         "mission": "GNEISS",
         "output_dir": mission_output_dir("GNEISS", color="green"),
         "filename_prefix": "brightness_vs_time",
-        "output_name": "GNEISS_brightness_green_alt_comparison.png",
+        "output_name": "GNEISS_brightness_green_mapping_height_comparison.png",
         "panels": [
             ("397", "left_brightness", "36.397"),
             ("398", "right_brightness", "36.398"),
@@ -33,7 +33,7 @@ PLOT_CONFIGS = [
         "mission": "GIRAFF",
         "output_dir": mission_output_dir("GIRAFF", color="green", date=rocket_default_date("380")),
         "filename_prefix": "GIRAFF_brightness_vs_time",
-        "output_name": "GIRAFF_380_brightness_green_alt_comparison.png",
+        "output_name": "GIRAFF_380_brightness_green_mapping_height_comparison.png",
         "panels": [
             ("380", "main_brightness", "36.380"),
         ],
@@ -42,7 +42,7 @@ PLOT_CONFIGS = [
         "mission": "GIRAFF",
         "output_dir": mission_output_dir("GIRAFF", color="green", date=rocket_default_date("381")),
         "filename_prefix": "GIRAFF_brightness_vs_time",
-        "output_name": "GIRAFF_381_brightness_green_alt_comparison.png",
+        "output_name": "GIRAFF_381_brightness_green_mapping_height_comparison.png",
         "panels": [
             ("381", "main_brightness", "36.381"),
         ],

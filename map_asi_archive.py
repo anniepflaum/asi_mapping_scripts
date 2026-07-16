@@ -32,6 +32,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+from core.calibration import BACKGROUND_EDGE_BUFFER_PX, calibrate_green_image, green_calibration_factor
 from core.masks import build_overlap_masks
 from core.constants import (
     FRAME_INTERVAL_SECONDS_GREEN,
@@ -39,7 +40,6 @@ from core.constants import (
     NORMALIZATION_LOWER_PERCENTILE,
     NORMALIZATION_UPPER_PERCENTILE,
 )
-from core.plot_norm import compute_reference_norm_limits, reference_normalization_time
 from core.plotting import plot_map
 from core.remote_data import load_pkr_image, retrieve_pfisr
 from core.skymaps import load_skymaps
@@ -60,6 +60,20 @@ warnings.filterwarnings("ignore", category=UserWarning)
 apex = Apex()
 
 
+def calibrate_image_for_map(site, im_raw, skymaps, color):
+    if str(color).lower() != "green":
+        return im_raw, None
+    calibrated, bg = calibrate_green_image(site, im_raw, skymaps[site]["mask"], edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX)
+    if calibrated is None:
+        print(f"{site}: no green calibration factor configured; using raw counts.")
+        return im_raw, None
+    print(
+        f"{site}: calibrated green image using bg={bg['center']:.2f} counts, "
+        f"sigma={bg['sigma']:.2f}, factor={green_calibration_factor(site):g} R s/count"
+    )
+    return calibrated, bg
+
+
 def main():
     """
     Main entry point: parses command-line arguments, loads skymaps, processes images for each site,
@@ -74,7 +88,6 @@ def main():
     ap.add_argument("--sites", nargs='*', default=None, help="List of sites to process (default: mission-specific sites)")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use for trajectories and mission-specific site assets")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel for TIFF lookup and frame timing")
-    ap.add_argument("--green-alt", type=float, default=None, help="Mapped altitude in km for green-channel skymaps and trajectories")
     ap.add_argument(
         "--bounds",
         nargs=4,
@@ -115,14 +128,12 @@ def main():
         lon_min, lon_max, lat_min, lat_max = args.bounds
         if lon_min >= lon_max or lat_min >= lat_max:
             ap.error("--bounds must satisfy LON_MIN < LON_MAX and LAT_MIN < LAT_MAX")
-    if args.green_alt is not None and args.green_alt <= 0:
-        ap.error("--green-alt must be > 0")
     if not (NORMALIZATION_LOWER_PERCENTILE < args.vmax <= 100):
         ap.error(f"--vmax must be > {NORMALIZATION_LOWER_PERCENTILE:g} and <= 100")
     # --- Load geographic mapping for each ASI site ---
     selected_sites = set([s.upper() for s in args.sites])
     validate_color_and_sites(ap, args.mission, args.color, selected_sites, giraff_message_site="VEE TIFFs and PKR PNGs")
-    skymaps = load_skymaps(selected_sites, color=args.color, mission=args.mission, green_alt=args.green_alt)
+    skymaps = load_skymaps(selected_sites, color=args.color, mission=args.mission)
 
     # --- Calculate masks for overlapping images between sites ---
     build_overlap_masks(skymaps)
@@ -139,7 +150,7 @@ def main():
     # --- Retrieve PFISR data for overlay ---
     pfisr = {}
     try:
-        pfisr = retrieve_pfisr(apex=apex, map_alt_km=mapped_apex_height(args.color, green_alt=args.green_alt))
+        pfisr = retrieve_pfisr(apex=apex, map_alt_km=mapped_apex_height(args.color))
     except Exception as e:
         if "resolvedvelocities module is not installed" not in str(e):
             print(f"Could not retrieve PFISR data: {e}")
@@ -147,20 +158,6 @@ def main():
     frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
 
     # --- Process TIFF-backed sites: search multiple tiles and select closest frame ---
-    fixed_norm_limits = None
-    if shared_norm:
-        reference_norm_time = reference_normalization_time(args.mission, date, time_str)
-        fixed_norm_limits = compute_reference_norm_limits(
-            skymaps,
-            selected_sites,
-            date,
-            reference_norm_time,
-            args.color,
-            frame_interval,
-            colorbar_scale=args.colorbar_scale,
-            mission=args.mission,
-            upper_percentile=args.vmax,
-        )
     for site in ['ARV', 'VEE', 'BVR']:
         if site not in selected_sites:
             continue
@@ -173,8 +170,9 @@ def main():
                 frame_interval=frame_interval,
                 color=args.color,
             )
-            imgs_raw[site] = im_raw
-            imgs[site] = im_raw
+            im_calibrated, _bg = calibrate_image_for_map(site, im_raw, skymaps, args.color)
+            imgs_raw[site] = im_calibrated
+            imgs[site] = im_calibrated
         except Exception as e:
             print(f"Could not load {site} TIFF image: {e}")
     # --- Process PKR site: prefer local PNGs and fall back to archive URL ---
@@ -190,7 +188,7 @@ def main():
     # --- Compose output path for mapped image, include plotting mode ---
     sites_str = '_'.join(sorted(selected_sites))
     color = args.color
-    output_path = mission_output_dir(args.mission, color=args.color, date=date) / f"{args.mission}_launch_{color}_{sites_str}_{date}_{time_token}.png"
+    output_path = mission_output_dir(args.mission, color=args.color, date=date) / f"calibrated_{color}_{sites_str}_{date}_{time_token}.png"
 
     # --- Run downstream plotting even if no TIFFs were found ---
     plot_map(
@@ -203,7 +201,7 @@ def main():
         bounds=args.bounds,
         color=args.color,
         imgs_raw=imgs_raw,
-        norm_limits=fixed_norm_limits,
+        norm_limits=None,
         colorbar_scale=args.colorbar_scale,
         colorbar_color=args.colorbar_color,
         shared_norm=shared_norm,
@@ -214,9 +212,9 @@ def main():
         plot_geodetic_traj=args.plot_geodetic_traj,
         plot_ezie=args.plot_ezie,
         mission=args.mission,
-        green_alt=args.green_alt,
         upper_percentile=args.vmax,
         render_mode=args.render,
+        colorbar_label="Rayleighs" if args.color == "green" else None,
     )
 
     tocall = time.time()

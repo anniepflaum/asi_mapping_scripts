@@ -47,7 +47,6 @@ def parse_args():
     ap.add_argument("--end", default=DEFAULT_END, help="End time HHMMSS(.fraction)")
     ap.add_argument("--step", type=float, default=DEFAULT_STEP_S, help="Output cadence in seconds")
     ap.add_argument("--color", choices=("green",), default="green", help="ASI color channel")
-    ap.add_argument("--green-alt", type=float, default=DEFAULT_GREEN_ALT_KM, help="Mapped altitude in km")
     ap.add_argument("--input-dir", type=Path, default=None, help="Input image root; default: ../images/green with site subfolders")
     ap.add_argument("--output", type=Path, default=None, help="Output NetCDF path")
     ap.add_argument(
@@ -169,10 +168,10 @@ def write_string_coord(ds, name, dim, values):
     return var
 
 
-def trajectory_data(times, color, green_alt, date):
+def trajectory_data(times, color, date):
     configs = trajectory_configs("GNEISS", date=date)
     labels = trajectory_display_labels("GNEISS", date=date)
-    lookups = {cfg.key: build_traj_lookup(str(cfg.path), color=color, green_alt=green_alt) for cfg in configs}
+    lookups = {cfg.key: build_traj_lookup(str(cfg.path), color=color) for cfg in configs}
     n_rockets = len(configs)
     n_times = len(times)
     n_points = max(len(lookups[cfg.key]["lats"]) for cfg in configs)
@@ -292,7 +291,7 @@ def write_netcdf(path, args, times, skymaps, valid_masks, tiffs, traj, bounds):
         ds.title = "GNEISS KAT mapped ASI brightness images and trajectories"
         ds.mission = "GNEISS"
         ds.color = args.color
-        ds.map_alt_km = float(args.green_alt)
+        ds.map_alt_km = float(DEFAULT_GREEN_ALT_KM)
         ds.requested_start_time = parse_date_and_time(args.date, args.start).isoformat()
         ds.requested_end_time = parse_date_and_time(args.date, args.end).isoformat()
         ds.start_time = times[0].isoformat()
@@ -316,11 +315,11 @@ def main():
     times = build_times(args.date, args.start, args.end, args.step)
     tiffs = load_site_tiffs(input_root, args.date, args.color)
 
-    skymaps = load_skymaps(set(SITES), color=args.color, mission="GNEISS", green_alt=args.green_alt)
-    build_overlap_masks(skymaps, map_alt_km=args.green_alt)
+    skymaps = load_skymaps(set(SITES), color=args.color, mission="GNEISS")
+    build_overlap_masks(skymaps)
     valid_masks = {site: valid_site_mask(skymaps[site]) for site in SITES}
     bounds = tuple(args.bounds) if args.bounds is not None else derive_bounds(skymaps, valid_masks)
-    traj = trajectory_data(times, args.color, args.green_alt, args.date)
+    traj = trajectory_data(times, args.color, args.date)
     y_size, x_size = tiffs[SITES[0]]["shape"]
 
     print(f"Writing KAT ASI mapped image NetCDF to {output_path}")

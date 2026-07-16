@@ -166,36 +166,6 @@ def find_brightness_csv(rocket, date, color):
     return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
-def find_all_alt_brightness_csvs(rocket, date, color):
-    default_start, default_end = default_time_range("GIRAFF", date)
-    by_alt = {}
-    for candidate in brightness_csv_candidates(rocket, date, color):
-        parsed = parse_brightness_csv_name(candidate)
-        if parsed is None or parsed["start"] != default_start or parsed["end"] != default_end:
-            continue
-        existing = by_alt.get(parsed["alt"])
-        prefer_candidate = existing is None
-        if existing is not None:
-            existing_parsed = parse_brightness_csv_name(existing)
-            existing_has_site_suffix = bool(existing_parsed and existing_parsed["site_suffix"])
-            candidate_has_site_suffix = bool(parsed["site_suffix"])
-            prefer_candidate = (
-                existing_has_site_suffix
-                and not candidate_has_site_suffix
-            ) or (
-                existing_has_site_suffix == candidate_has_site_suffix
-                and candidate.stat().st_mtime > existing.stat().st_mtime
-            )
-        if prefer_candidate:
-            by_alt[parsed["alt"]] = candidate
-    if not by_alt:
-        raise FileNotFoundError(
-            f"No GIRAFF trajectory brightness CSVs found for rocket {rocket} in "
-            f"{mission_output_dir('GIRAFF', color=color, date=date)}"
-        )
-    return sorted(by_alt.items(), key=lambda item: item[0])
-
-
 def load_brightness_series(csv_path):
     times = []
     values = []
@@ -239,11 +209,6 @@ def seconds_since_t0(times, date):
 def default_output_path(image_path, rocket, date, color):
     stem = Path(image_path).stem
     return mission_output_dir("GIRAFF", color=color, date=date) / f"{stem}_traj_brightness.png"
-
-
-def all_alt_output_path(image_path, rocket, date, color):
-    stem = Path(image_path).stem
-    return mission_output_dir("GIRAFF", color=color, date=date) / f"{stem}_traj_brightness_all_alts.png"
 
 
 def plot_brightness_with_apes(
@@ -323,7 +288,6 @@ def main():
     ap.add_argument("--rocket", choices=["380", "381"], required=True, help="GIRAFF rocket number")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--minute", type=int, nargs="+", default=None, help="APES 1-minute panel number(s) to compare")
-    ap.add_argument("--all-alts", action="store_true", help="Overlay all available green-altitude brightness CSVs")
     args = ap.parse_args()
     if args.minute is not None and any(minute < 1 for minute in args.minute):
         ap.error("--minute values must be >= 1")
@@ -332,20 +296,16 @@ def main():
     config = APES_CONFIG[rocket]
     date = config["date"]
 
-    if args.all_alts:
-        csv_specs = [(alt, path) for alt, path in find_all_alt_brightness_csvs(rocket, date, args.color)]
-    else:
-        csv_specs = [(110.0, find_brightness_csv(rocket, date, args.color))]
+    csv_specs = [find_brightness_csv(rocket, date, args.color)]
 
     series = []
     launch_start = None
-    for alt, csv_path in csv_specs:
+    for csv_path in csv_specs:
         times, brightness, value_field = load_brightness_series(csv_path)
         t_since, launch_start = seconds_since_t0(times, date)
-        alt_label = f"{alt:g} km" if args.all_alts else "ASI brightness"
         series.append(
             {
-                "label": alt_label,
+                "label": "ASI brightness",
                 "csv_path": csv_path,
                 "t_since": t_since,
                 "brightness": brightness,
@@ -368,7 +328,7 @@ def main():
         if not any(np.any((item["t_since"] >= x_min) & (item["t_since"] <= x_max)) for item in series):
             print(f"{spec_image_path.name}: no brightness samples between {x_min:g} and {x_max:g} s, skipping")
             continue
-        output_path = all_alt_output_path(spec_image_path, rocket, date, args.color) if args.all_alts else default_output_path(spec_image_path, rocket, date, args.color)
+        output_path = default_output_path(spec_image_path, rocket, date, args.color)
         plot_brightness_with_apes(
             spec_image_path,
             output_path,

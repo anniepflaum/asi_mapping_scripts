@@ -38,11 +38,11 @@ XLSX_LON_COLUMN = "Long"
 XLSX_ALT_COLUMN = "Alt"
 XLSX_GPS_MSEC_COLUMN = "GPS Time (mSec of week)"
 XLSX_GPS_WEEK_COLUMN = "GPS Week"
-def mapped_apex_height(color="green", green_alt=None):
+def mapped_apex_height(color="green"):
     """Return the target apex mapping height for a given ASI color."""
     if str(color).lower() == "red":
         return DEFAULT_RED_ALT_KM
-    return float(green_alt) if green_alt is not None else DEFAULT_GREEN_ALT_KM
+    return DEFAULT_GREEN_ALT_KM
 
 
 def parse_gps_utc_time(value):
@@ -264,14 +264,14 @@ def trajectory_marker_second(filename):
     return 30.0
 
 
-def load_traj(filename, map_time=None, color="green", green_alt=None):
+def load_traj(filename, map_time=None, color="green"):
     """
     Load rocket trajectory from a GPS export file.
     Map lat/lon to the color-specific altitude and optionally return the nearest map-time point.
     """
     utc_times, flight_times, lats, lons, alts = load_traj_records(filename)
 
-    lats, lons, _ = apex.map_to_height(lats, lons, alts, mapped_apex_height(color, green_alt=green_alt))
+    lats, lons, _ = apex.map_to_height(lats, lons, alts, mapped_apex_height(color))
     idx = fixed_utc_minute_marker_indices(utc_times, second_of_minute=trajectory_marker_second(filename))
     latsm = lats[idx].squeeze()
     lonsm = lons[idx].squeeze()
@@ -297,9 +297,9 @@ def load_traj_times(filename):
     return flight_times
 
 
-def build_traj_lookup(traj_path, color="green", green_alt=None):
+def build_traj_lookup(traj_path, color="green"):
     """Load and cache one trajectory for repeated nearest-time lookup."""
-    lats, lons, _latm, _lonm, _lata, _lona, _lat_map, _lon_map = load_traj(traj_path, color=color, green_alt=green_alt)
+    lats, lons, _latm, _lonm, _lata, _lona, _lat_map, _lon_map = load_traj(traj_path, color=color)
     utc_times, flight_times, raw_lats, raw_lons, raw_alts = load_traj_records(traj_path)
     launch_start = get_launch_start_from_traj_csv(traj_path)
     return {

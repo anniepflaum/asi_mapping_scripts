@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from core.brightness import best_rocket_brightness
-from core.constants import DEFAULT_RED_ALT_KM, FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
+from core.constants import DEFAULT_GREEN_ALT_KM, DEFAULT_RED_ALT_KM, FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
 from core.remote_data import load_pkr_image
 from core.series_utils import (
@@ -55,8 +55,6 @@ def series_prefix(mission):
     return "brightness_vs_time" if str(mission).upper() == "GNEISS" else f"{str(mission).upper()}_brightness_vs_time"
 
 
-GREEN_BRIGHTNESS_ALTS_KM = (95.0, 100.0, 105.0, 110.0)
-DEFAULT_PLOT_GREEN_ALT_KM = 110.0
 GNEISS_MAGLAT_CSV = mission_output_dir("GNEISS", color="green") / "tg_to_maglat.csv"
 
 
@@ -75,27 +73,17 @@ def nondefault_site_suffix(mission, sites):
 
 
 def brightness_altitudes(color):
-    return GREEN_BRIGHTNESS_ALTS_KM if str(color).lower() == "green" else (DEFAULT_RED_ALT_KM,)
-
-
-def plotted_altitudes(color, all_alts=False):
-    alts = brightness_altitudes(color)
-    if all_alts or str(color).lower() != "green":
-        return alts
-    return (DEFAULT_PLOT_GREEN_ALT_KM,)
+    return (DEFAULT_RED_ALT_KM,) if str(color).lower() == "red" else (DEFAULT_GREEN_ALT_KM,)
 
 
 def alt_column_prefix(csv_key, alt_km):
     return f"{csv_key}_{format_alt_token(alt_km)}"
 
 
-def brightness_plot_title(color, all_alts=False):
+def brightness_plot_title(color):
     title = f"Brightness vs Time ({color})"
     if str(color).lower() == "green":
-        if all_alts:
-            title += "\nGreen mapped altitudes: " + ", ".join(f"{format_alt_token(alt)} km" for alt in GREEN_BRIGHTNESS_ALTS_KM)
-        else:
-            title += f"\nGreen mapped altitude: {format_alt_token(DEFAULT_PLOT_GREEN_ALT_KM)} km"
+        title += f"\nGreen mapped altitude: {format_alt_token(DEFAULT_GREEN_ALT_KM)} km"
     return title
 
 
@@ -110,10 +98,8 @@ def make_output_path(mission, date, start, end, step, color="green", sites=None)
     )
 
 
-def make_plot_output_path(csv_path, all_alts=False):
+def make_plot_output_path(csv_path):
     path = Path(csv_path)
-    if all_alts:
-        return path.with_name(f"{path.stem}_all_alts.png")
     return path.with_suffix(".png")
 
 
@@ -121,15 +107,12 @@ def series_rocket_key(series_key):
     return str(series_key).split("_", 1)[0]
 
 
-def plot_brightness_timeseries(times, series_by_key, output_path, title, labels_by_key=None, all_alts=False, x_label="Time"):
+def plot_brightness_timeseries(times, series_by_key, output_path, title, labels_by_key=None, x_label="Time"):
     if not times:
         raise ValueError("No rows with iso_time were collected")
-    rocket_order = ["397", "398"] if all_alts and {"397", "398"}.issubset({series_rocket_key(key) for key in series_by_key}) else []
-    if rocket_order:
-        fig, axes = plt.subplots(len(rocket_order), 1, figsize=(12, 8), sharex=True)
-    else:
-        fig, axes = plt.subplots(figsize=(12, 5))
-        axes = [axes]
+    rocket_order = []
+    fig, axes = plt.subplots(figsize=(12, 5))
+    axes = [axes]
     color_cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
     labels_by_key = labels_by_key or {}
     if rocket_order:
@@ -180,7 +163,7 @@ def brightness_field_candidates(csv_key, traj_key, alt_km, normalized=False):
     suffix = "brightness"
     alt_prefix = alt_column_prefix(csv_key, alt_km)
     candidates = [f"{alt_prefix}_{suffix}"]
-    if alt_km == DEFAULT_PLOT_GREEN_ALT_KM:
+    if alt_km == DEFAULT_GREEN_ALT_KM:
         candidates.extend([f"{csv_key}_{suffix}", f"{traj_key}_{suffix}"])
     return candidates
 
@@ -248,7 +231,6 @@ def main():
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to include")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
-    ap.add_argument("--all-alts", action="store_true", help="Plot all computed green mapped altitudes instead of only 110 km")
     ap.add_argument("--no-plot", action="store_true", help="Write the CSV only and skip the PNG plot")
     ap.add_argument("--no-csv", action="store_true", help="Skip CSV generation and plot from an existing CSV instead")
     args = ap.parse_args()
@@ -289,7 +271,6 @@ def main():
             selected_sites,
             color=args.color,
             mission=args.mission,
-            green_alt=alt if args.color == "green" else None,
         )
         for alt in alts
     }
@@ -310,7 +291,7 @@ def main():
     traj_configs = trajectory_config_tuples(args.mission, date=args.date)
     traj_lookups_by_alt = {
         alt: {
-            key: build_traj_lookup(str(path), color=args.color, green_alt=alt if args.color == "green" else None)
+            key: build_traj_lookup(str(path), color=args.color)
             for key, _tag, _label, path in traj_configs
         }
         for alt in alts
@@ -346,7 +327,7 @@ def main():
         plot_labels = {}
         for key in traj_lookups:
             csv_key = csv_prefixes[key]
-            for alt in plotted_altitudes(args.color, args.all_alts):
+            for alt in brightness_altitudes(args.color):
                 series_key = f"{csv_key}_{format_alt_token(alt)}"
                 plot_labels[series_key] = f"{traj_labels.get(key, csv_key)} {format_alt_token(alt)} km"
                 values = []
@@ -356,15 +337,14 @@ def main():
                     plot_value = float(value) if value else None
                     values.append(suppress_outside_rocket_window(plot_value, sample_dt, args.mission, csv_key))
                 plot_series[series_key] = values
-        plot_output = make_plot_output_path(out_path, all_alts=args.all_alts)
-        plot_title = brightness_plot_title(args.color, args.all_alts)
+        plot_output = make_plot_output_path(out_path)
+        plot_title = brightness_plot_title(args.color)
         plot_brightness_timeseries(
             plot_times,
             plot_series,
             plot_output,
             plot_title,
             labels_by_key=plot_labels,
-            all_alts=args.all_alts,
             x_label=x_label,
         )
         print(f"Plotted from existing CSV {csv_path}")
@@ -397,7 +377,7 @@ def main():
     plot_labels = {}
     for key in traj_lookups:
         csv_key = csv_prefixes[key]
-        for alt in plotted_altitudes(args.color, args.all_alts):
+        for alt in brightness_altitudes(args.color):
             series_key = f"{csv_key}_{format_alt_token(alt)}"
             plot_series[series_key] = []
             plot_labels[series_key] = f"{traj_labels.get(key, csv_key)} {format_alt_token(alt)} km"
@@ -482,15 +462,14 @@ def main():
 
     print(f"Wrote {len(rows)} rows to {out_path}")
     if not args.no_plot:
-        plot_output = make_plot_output_path(out_path, all_alts=args.all_alts)
-        plot_title = brightness_plot_title(args.color, args.all_alts)
+        plot_output = make_plot_output_path(out_path)
+        plot_title = brightness_plot_title(args.color)
         plot_brightness_timeseries(
             plot_times,
             plot_series,
             plot_output,
             plot_title,
             labels_by_key=plot_labels,
-            all_alts=args.all_alts,
             x_label="TG (s)" if args.mission == "GNEISS" else "Time",
         )
 

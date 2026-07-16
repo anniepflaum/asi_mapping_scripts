@@ -162,7 +162,7 @@ def main():
     frame_corrected_dt = corrected_her_time(frame_file_dt)
     her_frame = read_frame(DEFAULT_TIFF, frame_idx)
     vee_frame = load_vee_frame(args.date, target_dt)
-    skymaps = load_skymaps({"VEE"}, color="green", mission="GNEISS", green_alt=DEFAULT_GREEN_ALT_KM)
+    skymaps = load_skymaps({"VEE"}, color="green", mission="GNEISS")
     skymaps["HER"] = load_hera_skymap(DEFAULT_AZ, DEFAULT_EL, DEFAULT_SITE_LAT, DEFAULT_SITE_LON, DEFAULT_GREEN_ALT_KM)
     for site_skymap in skymaps.values():
         site_skymap["extra_masks"] = {}
@@ -194,7 +194,6 @@ def main():
         plot_geodetic_traj=False,
         shared_norm=True,
         mission="GNEISS",
-        green_alt=DEFAULT_GREEN_ALT_KM,
     )
 
 
