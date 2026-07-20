@@ -80,8 +80,12 @@ Important shared modules:
 ## Normalization
 
 `--shared-norm` is enabled by default in both map scripts. It uses one color
-scale across the selected sites for the requested timestamp. It does not use a
-fixed reference timestamp.
+scale across the selected sites from a fixed calibrated reference frame.
+
+Reference normalization times:
+- GNEISS: `core.constants.REFERENCE_NORMALIZATION_TIME` (`102400.0`)
+- GIRAFF `20250202` / rocket `381`: `071130`
+- GIRAFF `20250209` / rocket `380`: `083600`
 
 ## Default Time Ranges
 
@@ -130,7 +134,6 @@ Useful options:
 - `--color green|red`: ASI channel
 - `--bounds LON_MIN LON_MAX LAT_MIN LAT_MAX`: map bounds override
 - `--colorbar-scale linear|log`
-- `--colorbar-color monochromatic|viridis`
 - `--plot-receivers`
 - `--plot-ipps`
 - `--plot-geodetic-traj`
@@ -146,7 +149,6 @@ python3 map_asi_archive_series.py \
   --step 10 \
   --sites ARV BVR VEE \
   --bounds -150 -142 65 69 \
-  --colorbar-color monochromatic \
   --plot-ipps
 ```
 
@@ -162,7 +164,7 @@ python3 map_asi_archive_series.py \
 ### `traj_brightness_series.py`
 
 Samples brightness at rocket trajectory positions through a time range and
-writes a CSV plus a brightness plot unless `--no-plot` is used.
+writes a calibrated HDF5 file plus a brightness plot unless `--no-plot` is used.
 
 ```bash
 python3 traj_brightness_series.py \
@@ -177,13 +179,15 @@ python3 traj_brightness_series.py \
   --date 20250209
 ```
 
-Trajectory CSV outputs include rocket geodetic columns:
-- `<trajectory>_rocket_lat`
-- `<trajectory>_rocket_lon`
-- `<trajectory>_rocket_alt_km`
+Trajectory HDF5 files store `time_iso`, optional `time_since_tg_s`, and one
+`rockets/<rocket>` group per trajectory. Each rocket group contains geodetic
+coordinates, magnetic latitude where available, and mapped-altitude brightness
+datasets. Brightness is calibrated in Rayleighs using a per-frame buffered-corner
+background, the channel exposure time, and the site calibration factor. File
+attributes record the units, calibration, selected cameras, time range, and cadence.
 
-GIRAFF CSV outputs also include:
-- `main_reference_norm_brightness`
+Use `--plot-existing` to redraw the PNG from an existing HDF5 file without
+reprocessing camera frames. `traj_brightness_series.py` does not write CSV output.
 
 The old receiver IPP sidecar CSV from `traj_brightness_series.py` has been
 removed. Use `ipps_brightness_series.py` for receiver IPP brightness products.
@@ -192,6 +196,9 @@ removed. Use `ipps_brightness_series.py` for receiver IPP brightness products.
 
 Samples brightness at receiver IPPs for each mission trajectory. It generates a
 CSV and plot by default; pass `--no-csv` to plot from an existing CSV instead.
+Brightness values are calibrated Rayleighs, with calibration provenance stored in
+the `brightness_units` and `calibration_json` columns. The PKR camera is skipped
+because no PKR Rayleigh calibration is configured.
 
 ```bash
 python3 ipps_brightness_series.py \
@@ -219,6 +226,8 @@ For GIRAFF, receivers are filtered to `VEE`, `TOO`, and `PKR`.
 
 Builds trajectory keograms. GNEISS produces two panels for rockets 397 and 398;
 GIRAFF produces one panel for rocket 381 or 380, selected by date.
+The plotted and HDF5 brightness arrays are calibrated Rayleighs. The HDF5 file
+stores units and calibration provenance alongside the redrawable arrays.
 
 ```bash
 python3 trajectory_keogram.py \
@@ -282,7 +291,7 @@ Outputs are written under color, mission, and for GIRAFF rocket directories:
 Examples:
 - mapped images: `GIRAFF_launch_red_VEE_20250209_083600.png`
 - map series folders: `GIRAFF_launch_red_VEE_20250209_083501_to_084410_step_10/`
-- trajectory brightness CSVs: `GIRAFF_brightness_vs_time_20250209_083501_084410_step0p05.csv`
+- trajectory brightness HDF5: `GIRAFF_brightness_vs_time_20250209_083501_084410_step0p05.h5`
 - IPP brightness CSVs: `GIRAFF_ipps_brightness_series_20250209_083501_084410_step0p05.csv`
 - GIRAFF keograms: `GIRAFF_trajectory_keogram_green_20250209_083501_084410.png`
 - GNEISS keograms: `trajectory_keogram_green_20260210_101900_102848.png`

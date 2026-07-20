@@ -29,6 +29,7 @@ from apexpy import Apex
 import datetime as dt
 import time
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
 
@@ -40,6 +41,7 @@ from core.constants import (
     NORMALIZATION_LOWER_PERCENTILE,
     NORMALIZATION_UPPER_PERCENTILE,
 )
+from core.plot_norm import compute_linear_image_limits, compute_log_image_limits, reference_normalization_time
 from core.plotting import plot_map
 from core.remote_data import load_pkr_image, retrieve_pfisr
 from core.skymaps import load_skymaps
@@ -72,6 +74,81 @@ def calibrate_image_for_map(site, im_raw, skymaps, color):
     return calibrated, bg
 
 
+def wavelength_title(color, red_wavelength="6300"):
+    if str(color).lower() == "green":
+        return "557.7nm"
+    if str(color).lower() == "red":
+        red_labels = {
+            "6300": "630nm",
+            "8446": "844.6nm",
+        }
+        return red_labels.get(str(red_wavelength), f"{red_wavelength}nm")
+    return str(color)
+
+
+def calibrated_reference_norm_limits(
+    skymaps,
+    selected_sites,
+    date,
+    ref_time_str,
+    color,
+    frame_interval,
+    colorbar_scale="linear",
+    mission="GNEISS",
+    red_wavelength="6300",
+    upper_percentile=NORMALIZATION_UPPER_PERCENTILE,
+):
+    ref_dt = parse_date_and_time(date, ref_time_str)
+    norm_pool = []
+    for site in ["ARV", "VEE", "BVR"]:
+        if site not in selected_sites:
+            continue
+        try:
+            tiff_candidates = get_site_tiff_candidates(
+                site,
+                date,
+                color,
+                mission=mission,
+                red_wavelength=red_wavelength,
+            )
+            im_raw, _im_display = load_best_frame_from_tiffs(
+                site,
+                tiff_candidates,
+                ref_dt,
+                frame_interval=frame_interval,
+                color=color,
+                verbose=False,
+            )
+            im, _bg = calibrate_image_for_map(site, im_raw, skymaps, color)
+            side_img = im.copy()
+            side_img[skymaps[site]["mask"]] = np.nan
+            main_img = side_img.copy()
+            for mask in skymaps[site].get("extra_masks", {}).values():
+                main_img[mask] = np.nan
+            vals = main_img[np.isfinite(main_img)]
+            if vals.size > 0:
+                norm_pool.append(vals)
+        except Exception as exc:
+            print(f"{site}: reference calibration frame unavailable at {ref_time_str}: {exc}")
+
+    if not norm_pool:
+        print(f"Reference normalization at {ref_time_str} found no valid calibrated pixels; falling back to per-frame normalization.")
+        return None, None
+
+    if colorbar_scale == "log":
+        vmin, vmax = compute_log_image_limits(norm_pool, upper_percentile=upper_percentile)
+        if vmin is None or vmax is None:
+            print(f"Reference normalization at {ref_time_str} found no positive calibrated pixels; falling back to per-frame normalization.")
+            return None, None
+    else:
+        vmin, vmax = compute_linear_image_limits(norm_pool, upper_percentile=upper_percentile)
+        if vmin is None or vmax is None:
+            print(f"Reference normalization at {ref_time_str} found no finite calibrated pixels; falling back to per-frame normalization.")
+            return None, None
+    print(f"Calibrated normalization fixed to {ref_time_str}: vmin={vmin:.2f}, vmax={vmax:.2f} R")
+    return vmin, vmax
+
+
 def main():
     """
     Main entry point: parses command-line arguments, loads skymaps, processes images for each site,
@@ -96,8 +173,6 @@ def main():
         help="Optional map bounds override: lon_min lon_max lat_min lat_max",
     )
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling for ASI intensity")
-    ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
-    ap.add_argument("--render", choices=["auto", "pcolor", "points", "regrid"], default="auto", help="Image rendering mode. auto uses regrid for red and pcolor otherwise")
     ap.add_argument("--vmax", type=float, default=NORMALIZATION_UPPER_PERCENTILE, help="Upper percentile used as vmax for ASI normalization")
     ap.add_argument(
         "--no-shared-norm",
@@ -159,6 +234,21 @@ def main():
     frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
 
     # --- Process TIFF-backed sites: search multiple tiles and select closest frame ---
+    fixed_norm_limits = None
+    if shared_norm:
+        reference_norm_time = reference_normalization_time(args.mission, date, time_str)
+        fixed_norm_limits = calibrated_reference_norm_limits(
+            skymaps,
+            selected_sites,
+            date,
+            reference_norm_time,
+            args.color,
+            frame_interval,
+            colorbar_scale=args.colorbar_scale,
+            mission=args.mission,
+            red_wavelength=args.red_wavelength,
+            upper_percentile=args.vmax,
+        )
     for site in ['ARV', 'VEE', 'BVR']:
         if site not in selected_sites:
             continue
@@ -208,9 +298,9 @@ def main():
         bounds=args.bounds,
         color=args.color,
         imgs_raw=imgs_raw,
-        norm_limits=None,
+        norm_limits=fixed_norm_limits,
         colorbar_scale=args.colorbar_scale,
-        colorbar_color=args.colorbar_color,
+        colorbar_color="monochromatic",
         shared_norm=shared_norm,
         apex=apex,
         plot_receivers=args.plot_receivers,
@@ -220,8 +310,8 @@ def main():
         plot_ezie=args.plot_ezie,
         mission=args.mission,
         upper_percentile=args.vmax,
-        render_mode=args.render,
         colorbar_label="Rayleighs",
+        channel_title=wavelength_title(args.color, args.red_wavelength),
     )
 
     tocall = time.time()

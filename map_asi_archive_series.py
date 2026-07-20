@@ -9,7 +9,6 @@ Example:
       --sites ARV BVR VEE \
       --color green \
       --bounds -150 -142 65 69 \
-      --colorbar-color monochromatic \
       --plot-ipps
 """
 
@@ -43,6 +42,18 @@ def format_step_token(step_seconds):
     return str(step_seconds).replace(".", "p").rstrip("0").rstrip("p")
 
 
+def wavelength_token(color, red_wavelength="6300"):
+    if str(color).lower() == "green":
+        return "557p7nm"
+    if str(color).lower() == "red":
+        red_tokens = {
+            "6300": "630nm",
+            "8446": "844p6nm",
+        }
+        return red_tokens.get(str(red_wavelength), f"{str(red_wavelength).replace('.', 'p')}nm")
+    return str(color).lower()
+
+
 def effective_sites(args):
     if args.sites is not None:
         sites = [site.upper() for site in args.sites]
@@ -56,7 +67,7 @@ def series_output_dir(args):
     start_token = sanitize_time_for_filename(args.start)
     end_token = sanitize_time_for_filename(args.end)
     step_token = format_step_token(args.step)
-    folder_name = f"launch_{args.color}_{sites_str}_{args.date}_{start_token}_to_{end_token}_step_{step_token}"
+    folder_name = f"{wavelength_token(args.color, args.red_wavelength)}_{sites_str}_{args.date}_{start_token}_to_{end_token}_step_{step_token}"
     return mission_output_dir(args.mission, color=args.color, date=args.date) / folder_name
 
 
@@ -90,8 +101,6 @@ def build_command(args, time_arg):
         args.color,
         "--red-wavelength",
         args.red_wavelength,
-        "--colorbar-color",
-        args.colorbar_color,
         "--colorbar-scale",
         args.colorbar_scale,
         "--vmax",
@@ -137,7 +146,6 @@ def main():
         help="Optional map bounds override",
     )
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling")
-    ap.add_argument("--colorbar-color", choices=["viridis", "monochromatic"], default="monochromatic", help="Colorbar colormap")
     ap.add_argument("--vmax", type=float, default=NORMALIZATION_UPPER_PERCENTILE, help="Upper percentile used as vmax for downstream ASI normalization")
     ap.add_argument(
         "--no-shared-norm",

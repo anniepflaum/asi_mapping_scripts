@@ -7,6 +7,7 @@ import datetime as dt
 import json
 from pathlib import Path
 
+import h5py
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
 from core.missions import (
@@ -23,9 +24,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial import cKDTree
 
+from core.calibration import (
+    BACKGROUND_EDGE_BUFFER_PX,
+    calibration_metadata,
+    calibrate_image_cached,
+    calibration_factor,
+    exposure_time_s,
+    partition_calibrated_sites,
+)
+from core.series_utils import load_tiff_frame_with_metadata
 from core.time_utils import format_time_label, parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
 from traj_brightness_series import format_time_arg
-from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates, load_best_frame_from_cached_tiffs
+from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import build_traj_lookup, get_launch_start_from_traj_csv, resample_traj_by_time
 
 
@@ -43,8 +53,11 @@ def build_output_path(output_arg, mission, date_str, start, end, color):
 
 def build_data_output_path(data_output_arg, output_path):
     if data_output_arg:
-        return Path(data_output_arg)
-    return Path(output_path).with_suffix(".npz")
+        path = Path(data_output_arg)
+        if path.suffix.lower() not in {".h5", ".hdf5"}:
+            path = path.with_suffix(".h5")
+        return path
+    return Path(output_path).with_suffix(".h5")
 
 
 def build_maglat_output_path(output_path):
@@ -88,15 +101,20 @@ def sample_profile_from_site(raw_img, site_sampler, sample_lats, sample_lons):
     return brightness, mean_distance
 
 
-def build_combined_profile(sample_lats, sample_lons, imgs_raw, samplers, selected_sites):
+def build_combined_profile(sample_lats, sample_lons, imgs_calibrated, samplers, selected_sites):
     best_brightness = np.full(sample_lats.shape, np.nan, dtype=float)
     best_distance = np.full(sample_lats.shape, np.inf, dtype=float)
     best_site = np.full(sample_lats.shape, "", dtype=object)
 
     for site in selected_sites:
-        if site not in imgs_raw or site not in samplers:
+        if site not in imgs_calibrated or site not in samplers:
             continue
-        brightness, distance = sample_profile_from_site(imgs_raw[site], samplers[site], sample_lats, sample_lons)
+        brightness, distance = sample_profile_from_site(
+            imgs_calibrated[site],
+            samplers[site],
+            sample_lats,
+            sample_lons,
+        )
         take = np.isfinite(brightness) & (distance < best_distance)
         best_brightness[take] = brightness[take]
         best_distance[take] = distance[take]
@@ -197,8 +215,17 @@ def save_keogram_data(
         "time_since_tg_s": np.asarray(time_since_tg, dtype=float),
         "x_limits_s": np.asarray([x_min, x_max], dtype=float),
         "brightness_limits": np.asarray([max(vmin, 1e-6), max(vmax, max(vmin, 1e-6) * 1.0001)], dtype=float),
+        "brightness_units": np.asarray("Rayleighs"),
         "tags": np.asarray([str(panel[-1]) for panel in panels]),
-        "metadata_json": np.asarray(json.dumps({"source_data_file": source_data_files})),
+        "metadata_json": np.asarray(
+            json.dumps(
+                {
+                    "source_data_file": source_data_files,
+                    "brightness_units": "Rayleighs",
+                    "calibration": calibration_metadata(args.sites, args.color),
+                }
+            )
+        ),
     }
     for _ax, img, flight_times, line_y, y_bounds, _title, _launch_start, tag in panels:
         tag = str(tag)
@@ -215,7 +242,29 @@ def save_keogram_data(
             data[f"magnetic_latitude_{tag}_deg"] = np.asarray(maglat_by_tag[tag], dtype=float)
 
     data_output_path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(data_output_path, **data)
+    string_dtype = h5py.string_dtype(encoding="utf-8")
+    with h5py.File(data_output_path, "w") as h5:
+        h5.attrs["format"] = "trajectory_keogram"
+        h5.attrs["schema_version"] = "2.0"
+        h5.attrs["brightness_units"] = "Rayleighs"
+        for name, values in data.items():
+            array = np.asarray(values)
+            if array.dtype.kind in {"O", "S", "U"}:
+                if array.ndim == 0:
+                    dataset = h5.create_dataset(name, data=str(array.item()), dtype=string_dtype)
+                else:
+                    strings = np.asarray([str(value) for value in array.ravel()], dtype=object).reshape(array.shape)
+                    dataset = h5.create_dataset(name, data=strings, dtype=string_dtype)
+                if name == "brightness_units":
+                    dataset.attrs["description"] = "Physical units for brightness arrays and limits"
+                continue
+
+            options = {}
+            if array.ndim > 0 and array.size > 0:
+                options = {"compression": "gzip", "compression_opts": 4, "shuffle": True}
+            dataset = h5.create_dataset(name, data=array, **options)
+            if name == "brightness_limits" or name.startswith("brightness_"):
+                dataset.attrs["units"] = "Rayleighs"
     print(f"Saved keogram data to {data_output_path}")
 
 
@@ -265,7 +314,7 @@ def plot_maglat_keogram(output_path, panels, maglat_by_tag, log_norm, color):
 
     axes[-1].set_xlabel("Magnetic Latitude (deg)")
     cbar = fig.colorbar(image_handle, ax=axes, orientation="vertical", shrink=0.95)
-    cbar.set_label(f"{color.capitalize()} Channel Intensity")
+    cbar.set_label("Brightness (Rayleighs)")
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"Saved magnetic-latitude keogram to {output_path}")
@@ -282,7 +331,11 @@ def main():
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
     ap.add_argument("--output", default=None, help="Output PNG path")
-    ap.add_argument("--data-output", default=None, help="Output NPZ path for redrawable keogram data; defaults to the PNG path with .npz")
+    ap.add_argument(
+        "--data-output",
+        default=None,
+        help="Output HDF5 path for redrawable keogram data; defaults to the PNG path with .h5",
+    )
     args = ap.parse_args()
     try:
         args.mission, args.date = resolve_mission_and_date(args.mission, args.rocket)
@@ -300,6 +353,22 @@ def main():
     if args.sites is None:
         args.sites = default_sites(args.mission)
     validate_color_and_sites(ap, args.mission, args.color, args.sites)
+    args.sites, unsupported_sites = partition_calibrated_sites(
+        [site.upper() for site in args.sites],
+        args.color,
+    )
+    if unsupported_sites:
+        print(
+            f"Skipping sites without {args.color} Rayleigh calibration: "
+            f"{', '.join(unsupported_sites)}"
+        )
+    if not args.sites:
+        ap.error(f"none of the requested sites has a {args.color} Rayleigh calibration")
+    for site in args.sites:
+        print(
+            f"{site}: calibration factor={calibration_factor(site, args.color):g} R s/count, "
+            f"exposure={exposure_time_s(args.color):g}s"
+        )
 
     try:
         parse_hhmmss_fractional(args.start)
@@ -316,7 +385,7 @@ def main():
     if end_dt < start_dt:
         ap.error("--end must be >= --start")
 
-    selected_sites = [s.upper() for s in args.sites]
+    selected_sites = list(args.sites)
     skymaps = load_skymaps(set(selected_sites), color=args.color, mission=args.mission)
     build_overlap_masks(skymaps)
     samplers = {site: build_site_sampler(skymaps, site) for site in selected_sites if site in skymaps}
@@ -363,27 +432,45 @@ def main():
         traj_data.sort(key=lambda traj: plot_order.get(str(traj["tag"]), 99))
 
     times = []
+    calibration_cache = {}
     step_td = dt.timedelta(seconds=args.step)
     t = start_dt
     frame_idx = 0
     while t <= end_dt:
         time_arg = format_time_arg(t)
-        imgs_raw = {}
+        imgs_calibrated = {}
         for site in ["ARV", "VEE", "BVR"]:
             if site not in selected_sites:
                 continue
             try:
-                imgs_raw[site] = load_best_frame_from_cached_tiffs(
+                im_raw, frame_info = load_tiff_frame_with_metadata(
                     site,
                     tiff_metadata.get(site, []),
                     t,
                     frame_interval=frame_interval,
                 )
+                calibrated, _background = calibrate_image_cached(
+                    site,
+                    im_raw,
+                    skymaps[site]["mask"],
+                    args.color,
+                    frame_info["frame_time"],
+                    calibration_cache,
+                    edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX,
+                )
+                if calibrated is not None:
+                    imgs_calibrated[site] = calibrated
             except Exception as exc:
-                print(f"{time_arg} {site}: frame load failed: {exc}")
+                print(f"{time_arg} {site}: frame load/calibration failed: {exc}")
 
         for traj in traj_data:
-            profile, _site = build_combined_profile(traj["lats"], traj["lons"], imgs_raw, samplers, selected_sites)
+            profile, _site = build_combined_profile(
+                traj["lats"],
+                traj["lons"],
+                imgs_calibrated,
+                samplers,
+                selected_sites,
+            )
             traj["cols"].append(profile)
         times.append(t)
 
@@ -481,7 +568,7 @@ def main():
     axes[-1].set_xlabel("Time since TG (s)")
 
     cbar = fig.colorbar(image_handle, ax=axes, orientation="vertical", shrink=0.95)
-    cbar.set_label(f"{args.color.capitalize()} Channel Intensity")
+    cbar.set_label("Brightness (Rayleighs)")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     data_output_path = build_data_output_path(args.data_output, output_path)

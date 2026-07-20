@@ -537,10 +537,11 @@ def sample_rocket_brightnesses(traj_ctx, skymaps, imgs_raw):
     return brightnesses
 
 
-def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default_with_args, default_without_args, brightness_markers=None, shared_norm=True, mission="GNEISS", legend_loc="upper right", map_alt_km=None, colorbar_label=None):
+def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default_with_args, default_without_args, brightness_markers=None, shared_norm=True, mission="GNEISS", legend_loc="upper right", map_alt_km=None, colorbar_label=None, channel_title=None):
     ax.text(0.99, 0.01, label_str, transform=ax.transAxes, fontsize=12, color="w", ha="right", va="bottom", bbox=dict(facecolor="black", alpha=0.5, boxstyle="round,pad=0.2"))
     altitude_text = f" - {map_alt_km:g}km" if map_alt_km is not None else ""
-    ax.set_title(f"Mapped ASIs and {mission} trajectory ({color} channel{altitude_text})")
+    channel_text = channel_title or color
+    ax.set_title(f"Mapped ASIs and {mission} trajectory ({channel_text} channel{altitude_text})")
     ax.legend(loc=legend_loc)
     if im_handle is not None:
         cax = fig.add_subplot(gs[:, 1])
@@ -577,7 +578,7 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None, plot_ezie=False, render_mode="auto", colorbar_label=None):
+def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None, plot_ezie=False, render_mode="auto", colorbar_label=None, channel_title=None):
     receivers = filter_receivers_for_mission(load_receivers(warn=print_warning), mission) if (plot_receivers or plot_ipps) else []
     if pretty:
         fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex, mapped_apex_height(color))
@@ -644,4 +645,5 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=Non
         legend_loc="upper left" if plot_ezie else "upper right",
         map_alt_km=mapped_apex_height(color),
         colorbar_label=colorbar_label,
+        channel_title=channel_title,
     )

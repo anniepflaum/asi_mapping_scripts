@@ -14,6 +14,7 @@ For each time step in a requested range, this script:
 import argparse
 import csv
 import datetime as dt
+import json
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -21,10 +22,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from core.brightness import best_rocket_brightness
+from core.calibration import (
+    BACKGROUND_EDGE_BUFFER_PX,
+    calibration_metadata,
+    calibrate_image_cached,
+    calibration_factor,
+    exposure_time_s,
+    partition_calibrated_sites,
+)
 from core.calc_ipp import calc_ipp
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
-from core.remote_data import load_pkr_image
 from core.series_utils import (
     build_requested_iso_times,
     count_steps,
@@ -75,7 +83,7 @@ def filter_receivers(receivers, requested_acronyms):
     return [receiver_map[acronym] for acronym in requested]
 
 
-def compute_receiver_ipp_samples(receivers, rocket_geo, skymaps, imgs_raw, ipp_height_km):
+def compute_receiver_ipp_samples(receivers, rocket_geo, skymaps, imgs_calibrated, ipp_height_km):
     samples = []
     if (
         not receivers
@@ -105,7 +113,12 @@ def compute_receiver_ipp_samples(receivers, rocket_geo, skymaps, imgs_raw, ipp_h
             rockcoords="geo",
             height=ipp_height_km,
         )
-        brightness_sample = best_rocket_brightness(float(ipp_lat), float(ipp_lon), skymaps, imgs_raw)
+        brightness_sample = best_rocket_brightness(
+            float(ipp_lat),
+            float(ipp_lon),
+            skymaps,
+            imgs_calibrated,
+        )
         samples.append(
             {
                 "acronym": receiver["acronym"],
@@ -113,14 +126,14 @@ def compute_receiver_ipp_samples(receivers, rocket_geo, skymaps, imgs_raw, ipp_h
                 "ipp_lon": float(ipp_lon),
                 "site": brightness_sample["site"] if brightness_sample else "",
                 "percentile": brightness_sample["percentile"] if brightness_sample else None,
-                "brightness": brightness_sample["raw_brightness"] if brightness_sample else None,
+                "brightness": brightness_sample["brightness"] if brightness_sample else None,
             }
         )
     return samples
 
 
 def build_fieldnames(receivers, rocket_labels):
-    fieldnames = ["time"]
+    fieldnames = ["time", "brightness_units", "calibration_json"]
     for rocket_label in rocket_labels:
         for receiver in receivers:
             acronym = receiver["acronym"]
@@ -158,7 +171,7 @@ def plot_ipps_timeseries(times, rows, receivers, rocket_labels, output_path, tit
             all_brightnesses.extend(value for value in brightnesses if value is not None and np.isfinite(value) and value > 0)
             ax.plot(times, brightnesses, linewidth=1.0, color=color, label=acronym)
             ax.set_yscale("log")
-            ax.set_ylabel(f"{rocket_label} brightness")
+            ax.set_ylabel(f"{rocket_label} brightness (Rayleighs)")
             ax.grid(True, alpha=0.3)
 
     if all_brightnesses:
@@ -206,6 +219,23 @@ def main():
     if args.sites is None:
         args.sites = default_sites(args.mission, include_pkr=True)
     validate_color_and_sites(ap, args.mission, args.color, args.sites)
+    calibrated_sites, unsupported_sites = partition_calibrated_sites(
+        [site.upper() for site in args.sites],
+        args.color,
+    )
+    if unsupported_sites:
+        print(
+            f"Skipping sites without {args.color} Rayleigh calibration: "
+            f"{', '.join(unsupported_sites)}"
+        )
+    if not calibrated_sites:
+        ap.error(f"none of the requested sites has a {args.color} Rayleigh calibration")
+    args.sites = calibrated_sites
+    for site in args.sites:
+        print(
+            f"{site}: calibration factor={calibration_factor(site, args.color):g} R s/count, "
+            f"exposure={exposure_time_s(args.color):g}s"
+        )
 
     try:
         parse_hhmmss_fractional(args.start)
@@ -220,7 +250,7 @@ def main():
     if end_dt < start_dt:
         ap.error("--end must be >= --start")
 
-    selected_sites = set(s.upper() for s in args.sites)
+    selected_sites = set(args.sites)
     all_receivers = load_receivers()
     try:
         mission_receivers = filter_receivers_for_mission(all_receivers, args.mission)
@@ -273,7 +303,7 @@ def main():
         rows = [row for row in rows if row.get("time") in requested_times]
         plot_times = [dt.datetime.fromisoformat(row["time"]) for row in rows if row.get("time")]
         plot_output = make_plot_output_path(out_path, args.plot_output)
-        plot_title = args.plot_title or f"IPP Brightness vs Time ({args.color})"
+        plot_title = args.plot_title or f"Calibrated IPP Brightness vs Time ({args.color})"
         plot_ipps_timeseries(plot_times, rows, receivers, rocket_labels, plot_output, plot_title)
         print(f"Plotted from existing CSV {csv_path}")
         return
@@ -284,6 +314,8 @@ def main():
     total_steps = count_steps(start_dt, end_dt, args.step)
     step_idx = 0
     t = start_dt
+    calibration_cache = {}
+    calibration_json = json.dumps(calibration_metadata(args.sites, args.color), sort_keys=True)
     while t <= end_dt:
         step_idx += 1
         time_arg = format_time_arg(t)
@@ -293,7 +325,7 @@ def main():
             for key, tag, _label, _path in traj_configs
         }
 
-        imgs_raw = {}
+        imgs_calibrated = {}
 
         for site in ["ARV", "VEE", "BVR"]:
             if site not in selected_sites:
@@ -305,24 +337,36 @@ def main():
                     t,
                     frame_interval=frame_interval,
                 )
-                imgs_raw[site] = im_raw
+                calibrated, _background = calibrate_image_cached(
+                    site,
+                    im_raw,
+                    skymaps[site]["mask"],
+                    args.color,
+                    _site_frame_info["frame_time"],
+                    calibration_cache,
+                    edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX,
+                )
+                if calibrated is not None:
+                    imgs_calibrated[site] = calibrated
             except Exception as exc:
-                print(f"{time_arg} {site}: frame load failed: {exc}")
-
-        if "PKR" in selected_sites:
-            try:
-                pkr_lookup_time = t.strftime("%H%M%S")
-                pkr_img, _pkr_source, _pkr_frame_dt = load_pkr_image(args.date, pkr_lookup_time, color=args.color, verbose=False)
-                imgs_raw["PKR"] = pkr_img
-            except Exception as exc:
-                print(f"{time_arg} PKR: frame load failed: {exc}")
+                print(f"{time_arg} {site}: frame load/calibration failed: {exc}")
 
         rocket_samples = {
-            rocket_label: compute_receiver_ipp_samples(receivers, geo, skymaps, imgs_raw, ipp_height_km)
+            rocket_label: compute_receiver_ipp_samples(
+                receivers,
+                geo,
+                skymaps,
+                imgs_calibrated,
+                ipp_height_km,
+            )
             for rocket_label, geo in rocket_geos.items()
         }
 
-        row = {"time": t.isoformat()}
+        row = {
+            "time": t.isoformat(),
+            "brightness_units": "Rayleighs",
+            "calibration_json": calibration_json,
+        }
         for rocket_label, samples in rocket_samples.items():
             for sample in samples:
                 acronym = sample["acronym"]
@@ -344,7 +388,7 @@ def main():
     print(f"Wrote {len(rows)} rows to {out_path}")
     if not args.no_plot:
         plot_output = make_plot_output_path(out_path, args.plot_output)
-        plot_title = args.plot_title or f"IPP Brightness vs Time ({args.color})"
+        plot_title = args.plot_title or f"Calibrated IPP Brightness vs Time ({args.color})"
         plot_ipps_timeseries(plot_times, rows, receivers, rocket_labels, plot_output, plot_title)
 
 

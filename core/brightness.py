@@ -28,6 +28,7 @@ def zero_brightness_sample(site, d2, closest_idx=None):
         distance_deg = float(np.sqrt(d2[rr, cc]))
     return {
         "site": site,
+        "brightness": 0.0,
         "raw_brightness": 0.0,
         "percentile": 0.0,
         "distance_deg": distance_deg,
@@ -40,8 +41,8 @@ def zero_brightness_sample(site, d2, closest_idx=None):
 
 def sample_raw_brightness_at_latlon(site, lat0, lon0, skymaps, imgs_raw):
     """
-    Sample raw image brightness at (lat0, lon0) using the mean of the 25
-    closest valid pixels for a site.
+    Sample image brightness at (lat0, lon0) using the mean of the 25 closest
+    valid pixels for a site. Values retain the units of the supplied image.
     Returns zero brightness when the point is outside the mapped ASI footprint.
     """
     if site not in skymaps or site not in imgs_raw:
@@ -77,6 +78,7 @@ def sample_raw_brightness_at_latlon(site, lat0, lon0, skymaps, imgs_raw):
     rr, cc = np.unravel_index(closest_idx, d2.shape)
     return {
         "site": site,
+        "brightness": raw_val,
         "raw_brightness": raw_val,
         "percentile": percentile,
         "distance_deg": float(np.mean(np.sqrt(nearest_d2))),
@@ -89,7 +91,7 @@ def sample_raw_brightness_at_latlon(site, lat0, lon0, skymaps, imgs_raw):
 
 def best_rocket_brightness(lat0, lon0, skymaps, imgs_raw):
     """
-    Return nearest-pixel raw brightness info across all available sites for a rocket location.
+    Return nearest-pixel brightness info across all available sites for a rocket location.
     """
     samples = []
     for site in imgs_raw.keys():

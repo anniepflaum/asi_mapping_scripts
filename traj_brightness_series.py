@@ -6,12 +6,13 @@ For each time step in a requested range, this script:
 1) Loads the closest ASI frame per selected site.
 2) Finds each rocket position at that time.
 3) Samples brightness at rocket position using the same logic as map_asi_archive.py.
-4) Writes one CSV row per timestamp with trajectory brightness values.
+4) Writes calibrated trajectory brightness arrays and metadata to HDF5.
 """
 
 import argparse
 import csv
 import datetime as dt
+import json
 import os
 from pathlib import Path
 
@@ -21,18 +22,23 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+import h5py
 import numpy as np
 
 from core.brightness import best_rocket_brightness
+from core.calibration import (
+    BACKGROUND_EDGE_BUFFER_PX,
+    calibration_metadata,
+    calibrate_image_cached,
+    calibration_factor,
+    exposure_time_s,
+    partition_calibrated_sites,
+)
 from core.constants import DEFAULT_GREEN_ALT_KM, DEFAULT_RED_ALT_KM, FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
-from core.remote_data import load_pkr_image
 from core.series_utils import (
-    build_requested_iso_times,
     count_steps,
-    find_reusable_csv,
     format_time_arg,
-    load_rows_from_csv,
     load_tiff_frame_with_metadata,
     print_progress,
 )
@@ -81,7 +87,7 @@ def alt_column_prefix(csv_key, alt_km):
 
 
 def brightness_plot_title(color):
-    title = f"Brightness vs Time ({color})"
+    title = f"Calibrated Brightness vs Time ({color})"
     if str(color).lower() == "green":
         title += f"\nGreen mapped altitude: {format_alt_token(DEFAULT_GREEN_ALT_KM)} km"
     return title
@@ -94,12 +100,12 @@ def make_output_path(mission, date, start, end, step, color="green", sites=None)
     fit_suffix = "_FIT" if str(mission).upper() == "GIRAFF" else ""
     return Path(
         f"{series_prefix(mission)}_{date}_{start_tok}_{end_tok}_step{step_tok}"
-        f"{nondefault_site_suffix(mission, sites)}{fit_suffix}.csv"
+        f"{nondefault_site_suffix(mission, sites)}{fit_suffix}.h5"
     )
 
 
-def make_plot_output_path(csv_path):
-    path = Path(csv_path)
+def make_plot_output_path(data_path):
+    path = Path(data_path)
     return path.with_suffix(".png")
 
 
@@ -129,7 +135,7 @@ def plot_brightness_timeseries(times, series_by_key, output_path, title, labels_
             ax.plot(times, values, linewidth=1.4, color=color, label=f"{label} brightness")
         ax.set_title(f"{title} | {rocket}" if rocket else title)
         ax.set_yscale("log")
-        ax.set_ylabel("Brightness")
+        ax.set_ylabel("Brightness (Rayleighs)")
         ax.grid(True, alpha=0.3)
         ax.legend()
         if times and isinstance(times[0], dt.datetime):
@@ -152,35 +158,11 @@ def csv_column_prefix(traj_key, traj_tags):
     return tag
 
 
-def first_existing_field(row, field_names):
-    for field_name in field_names:
-        if row.get(field_name):
-            return row[field_name]
-    return ""
-
-
-def brightness_field_candidates(csv_key, traj_key, alt_km, normalized=False):
-    suffix = "brightness"
-    alt_prefix = alt_column_prefix(csv_key, alt_km)
-    candidates = [f"{alt_prefix}_{suffix}"]
-    if alt_km == DEFAULT_GREEN_ALT_KM:
-        candidates.extend([f"{csv_key}_{suffix}", f"{traj_key}_{suffix}"])
-    return candidates
-
-
 def in_rocket_time_window(sample_dt, mission, rocket_tag):
     if str(mission).upper() != "GNEISS":
         return True
     start_dt, end_dt = rocket_time_window_datetimes(rocket_tag)
     return start_dt <= sample_dt <= end_dt
-
-
-def suppress_outside_rocket_window(value, sample_dt, mission, rocket_tag):
-    if value is None or str(mission).upper() != "GNEISS":
-        return value
-    if not in_rocket_time_window(sample_dt, mission, rocket_tag):
-        return None
-    return value
 
 
 def load_gneiss_maglat_lookup(csv_path=GNEISS_MAGLAT_CSV):
@@ -222,6 +204,135 @@ def interpolate_gneiss_maglat(maglat_lookup, rocket, tg_time):
     return float(np.interp(tg_time, times, maglats))
 
 
+def row_float_array(rows, field):
+    return np.asarray(
+        [float(row[field]) if row.get(field) not in {None, ""} else np.nan for row in rows],
+        dtype=float,
+    )
+
+
+def altitude_dataset_name(alt_km):
+    return f"{format_alt_token(alt_km)}_km"
+
+
+def compressed_dataset(group, name, values, units=None):
+    values = np.asarray(values)
+    options = {}
+    if values.ndim > 0 and values.size > 0:
+        options = {"compression": "gzip", "compression_opts": 4, "shuffle": True}
+    dataset = group.create_dataset(name, data=values, **options)
+    if units is not None:
+        dataset.attrs["units"] = units
+    return dataset
+
+
+def write_brightness_hdf5(path, args, rows, traj_configs, csv_prefixes, alts):
+    """Write the calibrated trajectory series as structured HDF5."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    string_dtype = h5py.string_dtype(encoding="utf-8")
+    calibration = calibration_metadata(args.sites, args.color)
+
+    with h5py.File(path, "w") as h5:
+        h5.attrs["format"] = "trajectory_brightness_series"
+        h5.attrs["schema_version"] = "1.0"
+        h5.attrs["mission"] = args.mission
+        h5.attrs["date"] = args.date
+        h5.attrs["color"] = args.color
+        h5.attrs["start"] = args.start
+        h5.attrs["end"] = args.end
+        h5.attrs["step_s"] = float(args.step)
+        h5.attrs["brightness_units"] = "Rayleighs"
+        h5.attrs["selected_sites_json"] = json.dumps(args.sites)
+        h5.attrs["calibration_json"] = json.dumps(calibration, sort_keys=True)
+
+        time_iso = np.asarray([row["time"] for row in rows], dtype=object)
+        h5.create_dataset("time_iso", data=time_iso, dtype=string_dtype)
+        if args.mission == "GNEISS":
+            compressed_dataset(h5, "time_since_tg_s", row_float_array(rows, "TG"), units="s")
+
+        rockets_group = h5.create_group("rockets")
+        for key, tag, label, source_path in traj_configs:
+            if key not in csv_prefixes:
+                continue
+            rocket = csv_prefixes[key]
+            group = rockets_group.create_group(rocket)
+            group.attrs["trajectory_key"] = str(key)
+            group.attrs["trajectory_tag"] = str(tag)
+            group.attrs["label"] = str(label)
+            group.attrs["source_trajectory_file"] = Path(source_path).name
+            compressed_dataset(
+                group,
+                "geodetic_latitude_deg",
+                row_float_array(rows, f"{rocket}_rocket_lat"),
+                units="degrees_north",
+            )
+            compressed_dataset(
+                group,
+                "geodetic_longitude_deg",
+                row_float_array(rows, f"{rocket}_rocket_lon"),
+                units="degrees_east",
+            )
+            compressed_dataset(
+                group,
+                "geodetic_altitude_km",
+                row_float_array(rows, f"{rocket}_rocket_alt_km"),
+                units="km",
+            )
+            if args.mission == "GNEISS":
+                compressed_dataset(
+                    group,
+                    "magnetic_latitude_deg",
+                    row_float_array(rows, f"{rocket}_maglat"),
+                    units="degrees",
+                )
+            brightness_group = group.create_group("brightness")
+            for alt in alts:
+                dataset = compressed_dataset(
+                    brightness_group,
+                    altitude_dataset_name(alt),
+                    row_float_array(rows, f"{alt_column_prefix(rocket, alt)}_brightness"),
+                    units="Rayleighs",
+                )
+                dataset.attrs["mapped_altitude_km"] = float(alt)
+
+    print(f"Wrote {len(rows)} samples to {path}")
+
+
+def load_hdf5_plot_series(path, mission, traj_lookups, csv_prefixes, traj_labels, alts):
+    """Load plotting arrays from an existing trajectory-series HDF5 file."""
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"HDF5 file not found: {path}")
+    with h5py.File(path, "r") as h5:
+        if h5.attrs.get("format") != "trajectory_brightness_series":
+            raise ValueError(f"{path} is not a trajectory brightness HDF5 file")
+        if h5.attrs.get("brightness_units") != "Rayleighs":
+            raise ValueError(f"{path} does not contain Rayleigh-calibrated brightness")
+        time_iso = [dt.datetime.fromisoformat(value) for value in h5["time_iso"].asstr()[:]]
+        if mission == "GNEISS":
+            plot_times = np.asarray(h5["time_since_tg_s"], dtype=float).tolist()
+            x_label = "TG (s)"
+        else:
+            plot_times = time_iso
+            x_label = "Time"
+        plot_series = {}
+        plot_labels = {}
+        for key in traj_lookups:
+            rocket = csv_prefixes[key]
+            for alt in alts:
+                series_key = f"{rocket}_{format_alt_token(alt)}"
+                values = np.asarray(
+                    h5[f"rockets/{rocket}/brightness/{altitude_dataset_name(alt)}"],
+                    dtype=float,
+                )
+                plot_series[series_key] = values.tolist()
+                plot_labels[series_key] = (
+                    f"{traj_labels.get(key, rocket)} {format_alt_token(alt)} km"
+                )
+    return plot_times, plot_series, plot_labels, x_label
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rocket", choices=["397", "398", "380", "381"], default=None, help="Rocket ID used to select the ASI image date")
@@ -231,8 +342,13 @@ def main():
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to include")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use")
     ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
-    ap.add_argument("--no-plot", action="store_true", help="Write the CSV only and skip the PNG plot")
-    ap.add_argument("--no-csv", action="store_true", help="Skip CSV generation and plot from an existing CSV instead")
+    ap.add_argument("--output", default=None, help="Output HDF5 path")
+    ap.add_argument("--no-plot", action="store_true", help="Write the HDF5 file only and skip the PNG plot")
+    ap.add_argument(
+        "--plot-existing",
+        action="store_true",
+        help="Skip data generation and plot from the requested existing HDF5 file",
+    )
     args = ap.parse_args()
     try:
         args.mission, args.date = resolve_mission_and_date(args.mission, args.rocket)
@@ -250,6 +366,23 @@ def main():
     if args.sites is None:
         args.sites = default_sites(args.mission)
     validate_color_and_sites(ap, args.mission, args.color, args.sites)
+    calibrated_sites, unsupported_sites = partition_calibrated_sites(
+        [site.upper() for site in args.sites],
+        args.color,
+    )
+    if unsupported_sites:
+        print(
+            f"Skipping sites without {args.color} Rayleigh calibration: "
+            f"{', '.join(unsupported_sites)}"
+        )
+    if not calibrated_sites:
+        ap.error(f"none of the requested sites has a {args.color} Rayleigh calibration")
+    args.sites = calibrated_sites
+    for site in args.sites:
+        print(
+            f"{site}: calibration factor={calibration_factor(site, args.color):g} R s/count, "
+            f"exposure={exposure_time_s(args.color):g}s"
+        )
 
     try:
         parse_hhmmss_fractional(args.start)
@@ -264,7 +397,7 @@ def main():
     if end_dt < start_dt:
         ap.error("--end must be >= --start")
 
-    selected_sites = set(s.upper() for s in args.sites)
+    selected_sites = set(args.sites)
     alts = brightness_altitudes(args.color)
     skymaps_by_alt = {
         alt: load_skymaps(
@@ -301,42 +434,33 @@ def main():
     traj_labels = {key: label for key, _tag, label, _path in traj_configs}
     csv_prefixes = {key: csv_column_prefix(key, traj_tags) for key in traj_lookups}
 
-    out_path = make_output_path(args.mission, args.date, args.start, args.end, args.step, color=args.color, sites=args.sites)
-    if not out_path.is_absolute():
+    if args.output:
+        out_path = Path(args.output)
+        if out_path.suffix.lower() not in {".h5", ".hdf5"}:
+            out_path = out_path.with_suffix(".h5")
+    else:
+        out_path = make_output_path(
+            args.mission,
+            args.date,
+            args.start,
+            args.end,
+            args.step,
+            color=args.color,
+            sites=args.sites,
+        )
         out_path = mission_output_dir(args.mission, color=args.color, date=args.date) / out_path
 
-    if args.no_csv:
+    if args.plot_existing:
         if args.no_plot:
-            ap.error("--no-csv cannot be combined with --no-plot")
-        csv_path = find_reusable_csv(out_path, series_prefix(args.mission), args.date, args.start, args.end, args.step)
-        rows = load_rows_from_csv(csv_path, ["time"])
-        requested_times = set(build_requested_iso_times(args.date, args.start, args.end, args.step))
-        rows = [row for row in rows if row.get("time") in requested_times]
-        if args.mission == "GNEISS":
-            gneiss_t0 = rocket_launch_datetime("397")
-            plot_times = [
-                float(row["TG"]) if row.get("TG") else (dt.datetime.fromisoformat(row["time"]) - gneiss_t0).total_seconds()
-                for row in rows
-                if row.get("time")
-            ]
-            x_label = "TG (s)"
-        else:
-            plot_times = [dt.datetime.fromisoformat(row["time"]) for row in rows if row.get("time")]
-            x_label = "Time"
-        plot_series = {}
-        plot_labels = {}
-        for key in traj_lookups:
-            csv_key = csv_prefixes[key]
-            for alt in brightness_altitudes(args.color):
-                series_key = f"{csv_key}_{format_alt_token(alt)}"
-                plot_labels[series_key] = f"{traj_labels.get(key, csv_key)} {format_alt_token(alt)} km"
-                values = []
-                for row in rows:
-                    sample_dt = dt.datetime.fromisoformat(row["time"])
-                    value = first_existing_field(row, brightness_field_candidates(csv_key, key, alt, normalized=False))
-                    plot_value = float(value) if value else None
-                    values.append(suppress_outside_rocket_window(plot_value, sample_dt, args.mission, csv_key))
-                plot_series[series_key] = values
+            ap.error("--plot-existing cannot be combined with --no-plot")
+        plot_times, plot_series, plot_labels, x_label = load_hdf5_plot_series(
+            out_path,
+            args.mission,
+            traj_lookups,
+            csv_prefixes,
+            traj_labels,
+            alts,
+        )
         plot_output = make_plot_output_path(out_path)
         plot_title = brightness_plot_title(args.color)
         plot_brightness_timeseries(
@@ -347,30 +471,14 @@ def main():
             labels_by_key=plot_labels,
             x_label=x_label,
         )
-        print(f"Plotted from existing CSV {csv_path}")
+        print(f"Plotted from existing HDF5 {out_path}")
         return
 
-    fieldnames = ["time"]
     gneiss_t0 = None
     gneiss_maglat_lookup = None
     if args.mission == "GNEISS":
-        fieldnames.append("TG")
         gneiss_t0 = rocket_launch_datetime("397")
         gneiss_maglat_lookup = load_gneiss_maglat_lookup()
-    for key in traj_lookups:
-        csv_key = csv_prefixes[key]
-        fieldnames.extend(
-            [
-                f"{csv_key}_rocket_lat",
-                f"{csv_key}_rocket_lon",
-                f"{csv_key}_rocket_alt_km",
-            ]
-        )
-        if args.mission == "GNEISS":
-            fieldnames.append(f"{csv_key}_maglat")
-        for alt in alts:
-            alt_prefix = alt_column_prefix(csv_key, alt)
-            fieldnames.append(f"{alt_prefix}_brightness")
     rows = []
     plot_times = []
     plot_series = {}
@@ -385,11 +493,12 @@ def main():
     total_steps = count_steps(start_dt, end_dt, args.step)
     step_idx = 0
     t = start_dt
+    calibration_cache = {}
     while t <= end_dt:
         step_idx += 1
         time_arg = format_time_arg(t)
         print_progress(step_idx, total_steps, time_arg)
-        imgs_raw = {}
+        imgs_calibrated = {}
         frame_info = {}
 
         for site in ["ARV", "VEE", "BVR"]:
@@ -402,18 +511,20 @@ def main():
                     t,
                     frame_interval=frame_interval,
                 )
-                imgs_raw[site] = im_raw
+                calibrated, _background = calibrate_image_cached(
+                    site,
+                    im_raw,
+                    skymaps_by_alt[alts[0]][site]["mask"],
+                    args.color,
+                    site_frame_info["frame_time"],
+                    calibration_cache,
+                    edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX,
+                )
+                if calibrated is not None:
+                    imgs_calibrated[site] = calibrated
                 frame_info[site] = site_frame_info
             except Exception as exc:
-                print(f"{time_arg} {site}: frame load failed: {exc}")
-
-        if "PKR" in selected_sites:
-            try:
-                pkr_lookup_time = t.strftime("%H%M%S")
-                pkr_img, _pkr_source, _pkr_frame_dt = load_pkr_image(args.date, pkr_lookup_time, color=args.color, verbose=False)
-                imgs_raw["PKR"] = pkr_img
-            except Exception as exc:
-                print(f"{time_arg} PKR: frame load failed: {exc}")
+                print(f"{time_arg} {site}: frame load/calibration failed: {exc}")
 
         plot_times.append(t)
         row = {"time": t.isoformat()}
@@ -437,30 +548,28 @@ def main():
                 if in_window:
                     alt_lookup = traj_lookups_by_alt[alt][key]
                     lat, lon = lookup_traj_position(alt_lookup, time_arg)
-                    sample = best_rocket_brightness(lat, lon, skymaps_by_alt[alt], imgs_raw) if lat is not None and lon is not None else None
+                    sample = (
+                        best_rocket_brightness(lat, lon, skymaps_by_alt[alt], imgs_calibrated)
+                        if lat is not None and lon is not None
+                        else None
+                    )
                     outside_footprint = bool(sample and sample.get("outside_footprint", False))
                     if sample and not outside_footprint:
-                        plot_value = sample["raw_brightness"]
+                        plot_value = sample["brightness"]
                     else:
                         plot_value = None
                 else:
                     sample = None
                     plot_value = None
                 alt_prefix = alt_column_prefix(csv_key, alt)
-                row[f"{alt_prefix}_brightness"] = f"{sample['raw_brightness']:.3f}" if sample and not outside_footprint else ""
+                row[f"{alt_prefix}_brightness"] = f"{sample['brightness']:.3f}" if sample and not outside_footprint else ""
                 series_key = f"{csv_key}_{format_alt_token(alt)}"
                 if series_key in plot_series:
                     plot_series[series_key].append(plot_value)
         rows.append(row)
         t += step_td
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-    print(f"Wrote {len(rows)} rows to {out_path}")
+    write_brightness_hdf5(out_path, args, rows, traj_configs, csv_prefixes, alts)
     if not args.no_plot:
         plot_output = make_plot_output_path(out_path)
         plot_title = brightness_plot_title(args.color)

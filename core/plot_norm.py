@@ -1,6 +1,6 @@
 import numpy as np
 
-from core.constants import NORMALIZATION_LOWER_PERCENTILE, NORMALIZATION_UPPER_PERCENTILE
+from core.constants import NORMALIZATION_LOWER_PERCENTILE, NORMALIZATION_UPPER_PERCENTILE, REFERENCE_NORMALIZATION_TIME
 
 
 def compute_linear_image_limits(norm_pool, upper_percentile=NORMALIZATION_UPPER_PERCENTILE):
@@ -41,3 +41,13 @@ def choose_image_cmap(colorbar_color, color):
     if colorbar_color == "viridis":
         return "viridis"
     return "Reds" if str(color).lower() == "red" else "Greens"
+
+
+def reference_normalization_time(mission, date, time_str):
+    if str(mission).upper() == "GIRAFF":
+        if str(date) == "20250202":
+            return "071130"
+        if str(date) == "20250209":
+            return "083600"
+        return time_str
+    return REFERENCE_NORMALIZATION_TIME

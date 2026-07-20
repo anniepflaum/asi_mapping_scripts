@@ -15,8 +15,8 @@ GREEN_RAYLEIGH_SECONDS_PER_COUNT = {
 }
 RED_RAYLEIGH_SECONDS_PER_COUNT = {
     "ARV": 23.0,
-    "VEE": 17.0,
-    "BVR": 18.0,
+    "VEE": 37.0,
+    "BVR": 23.0,
 }
 RAYLEIGH_SECONDS_PER_COUNT_BY_COLOR = {
     "green": GREEN_RAYLEIGH_SECONDS_PER_COUNT,
@@ -112,6 +112,29 @@ def exposure_time_s(color):
     return EXPOSURE_TIME_S_BY_COLOR.get(str(color).lower())
 
 
+def partition_calibrated_sites(sites, color):
+    """Return requested sites split into calibrated and unsupported lists."""
+    supported = [site for site in sites if calibration_factor(site, color) is not None]
+    unsupported = [site for site in sites if calibration_factor(site, color) is None]
+    return supported, unsupported
+
+
+def calibration_metadata(sites, color):
+    """Describe the physical calibration applied to exported brightness data."""
+    return {
+        "brightness_units": "Rayleighs",
+        "color": str(color).lower(),
+        "factors_r_s_per_count": {
+            str(site).upper(): calibration_factor(site, color)
+            for site in sites
+            if calibration_factor(site, color) is not None
+        },
+        "exposure_time_s": exposure_time_s(color),
+        "background_method": "buffered_corners",
+        "background_edge_buffer_px": BACKGROUND_EDGE_BUFFER_PX,
+    }
+
+
 def calibrate_image(site, im, mask, color, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX):
     factor = calibration_factor(site, color)
     exposure = exposure_time_s(color)
@@ -124,6 +147,29 @@ def calibrate_image(site, im, mask, color, edge_buffer_px=BACKGROUND_EDGE_BUFFER
     dn = np.asarray(im, dtype=np.float32) - float(bg["center"])
     rayleighs = (dn / float(exposure)) * float(factor)
     return rayleighs.astype(np.float32), bg
+
+
+def calibrate_image_cached(
+    site,
+    im,
+    mask,
+    color,
+    frame_key,
+    cache,
+    edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX,
+):
+    """Calibrate a frame once, reusing it while a time series selects the same frame."""
+    cached = cache.get(site)
+    if cached is not None and cached["frame_key"] == frame_key:
+        return cached["image"], cached["background"]
+    image, background = calibrate_image(site, im, mask, color, edge_buffer_px=edge_buffer_px)
+    if image is not None:
+        cache[site] = {
+            "frame_key": frame_key,
+            "image": image,
+            "background": background,
+        }
+    return image, background
 
 
 def green_calibration_factor(site):
