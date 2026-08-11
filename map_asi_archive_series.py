@@ -14,10 +14,11 @@ Example:
 
 import argparse
 import datetime as dt
+import io
 import os
 import shutil
-import subprocess
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
@@ -26,10 +27,7 @@ from core.constants import NORMALIZATION_LOWER_PERCENTILE, NORMALIZATION_UPPER_P
 from core.series_utils import count_steps, format_time_arg, print_progress
 from core.time_utils import parse_date_and_time, parse_hhmmss_fractional, sanitize_time_for_filename
 from core.missions import default_sites, default_time_range, mission_output_dir, resolve_mission_and_date, validate_color_and_sites
-
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-MAP_SCRIPT = SCRIPT_DIR / "map_asi_archive.py"
+import map_asi_archive
 
 
 def clear_progress_line():
@@ -74,12 +72,16 @@ def series_output_dir(args):
 def frame_output_path(args, time_arg):
     sites_str = "_".join(effective_sites(args))
     time_token = sanitize_time_for_filename(time_arg)
-    filename = f"calibrated_{args.color}_{sites_str}_{args.date}_{time_token}.png"
+    render_suffix = "" if args.render_mode == "auto" else f"_{args.render_mode}"
+    filename = (
+        f"calibrated_{args.color}_{sites_str}_{args.date}_{time_token}"
+        f"{render_suffix}.png"
+    )
     return mission_output_dir(args.mission, color=args.color, date=args.date) / filename
 
 
-def move_frame_to_series_dir(args, time_arg, output_dir):
-    source_path = frame_output_path(args, time_arg)
+def move_frame_to_series_dir(args, time_arg, output_dir, source_path=None):
+    source_path = Path(source_path) if source_path is not None else frame_output_path(args, time_arg)
     if not source_path.exists():
         raise FileNotFoundError(f"Expected mapped frame was not created: {source_path}")
     destination_path = output_dir / source_path.name
@@ -89,10 +91,8 @@ def move_frame_to_series_dir(args, time_arg, output_dir):
     return destination_path
 
 
-def build_command(args, time_arg):
-    cmd = [
-        "python3",
-        str(MAP_SCRIPT),
+def build_map_args(args, time_arg):
+    map_args = [
         "--time",
         time_arg,
         "--mission",
@@ -105,26 +105,28 @@ def build_command(args, time_arg):
         args.colorbar_scale,
         "--vmax",
         str(args.vmax),
+        "--render-mode",
+        args.render_mode,
     ]
     if args.rocket is not None:
-        cmd.extend(["--rocket", args.rocket])
+        map_args.extend(["--rocket", args.rocket])
     if args.sites is not None:
-        cmd.extend(["--sites", *args.sites])
+        map_args.extend(["--sites", *args.sites])
     if args.no_shared_norm:
-        cmd.append("--no-shared-norm")
+        map_args.append("--no-shared-norm")
     if args.bounds is not None:
-        cmd.extend(["--bounds", *(str(v) for v in args.bounds)])
+        map_args.extend(["--bounds", *(str(v) for v in args.bounds)])
     if args.pretty:
-        cmd.append("--pretty")
+        map_args.append("--pretty")
     if args.plot_receivers:
-        cmd.append("--plot-receivers")
+        map_args.append("--plot-receivers")
     if args.plot_ipps:
-        cmd.append("--plot-ipps")
+        map_args.append("--plot-ipps")
     if args.plot_geodetic_traj:
-        cmd.append("--plot-geodetic-traj")
+        map_args.append("--plot-geodetic-traj")
     if args.plot_ezie:
-        cmd.append("--plot-ezie")
-    return cmd
+        map_args.append("--plot-ezie")
+    return map_args
 
 
 def main():
@@ -159,6 +161,17 @@ def main():
     ap.add_argument("--plot-ipps", action="store_true", help="Pass --plot-ipps through to map_asi_archive.py")
     ap.add_argument("--plot-geodetic-traj", action="store_true", help="Pass --plot-geodetic-traj through to map_asi_archive.py")
     ap.add_argument("--plot-ezie", action="store_true", help="Pass --plot-ezie through to map_asi_archive.py")
+    ap.add_argument(
+        "--render-mode",
+        choices=["auto", "pcolor", "pcolormesh", "points", "regrid"],
+        default="auto",
+        help="ASI rendering method passed to map_asi_archive.py",
+    )
+    ap.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print the detailed map_asi_archive.py log for every frame",
+    )
     args = ap.parse_args()
     try:
         args.mission, args.date = resolve_mission_and_date(args.mission, args.rocket)
@@ -208,25 +221,28 @@ def main():
     print_progress(0, total_steps, format_time_arg(start_dt))
     while t <= end_dt:
         time_arg = format_time_arg(t)
-        result = subprocess.run(
-            build_command(args, time_arg),
-            check=False,
-            cwd=SCRIPT_DIR,
-            capture_output=True,
-            text=True,
+        frame_stdout = io.StringIO()
+        frame_stderr = io.StringIO()
+        try:
+            with redirect_stdout(frame_stdout), redirect_stderr(frame_stderr):
+                source_path = map_asi_archive.main(build_map_args(args, time_arg))
+        except Exception:
+            clear_progress_line()
+            sys.stdout.write(frame_stdout.getvalue())
+            sys.stderr.write(frame_stderr.getvalue())
+            raise
+        destination_path = move_frame_to_series_dir(
+            args, time_arg, output_dir, source_path=source_path
         )
-        clear_progress_line()
-        if result.stdout:
-            sys.stdout.write(result.stdout)
-        if result.stderr:
-            sys.stderr.write(result.stderr)
-        if result.returncode != 0:
-            raise subprocess.CalledProcessError(result.returncode, result.args)
-        destination_path = move_frame_to_series_dir(args, time_arg, output_dir)
-        print(f"Moved frame to {destination_path}")
+        if args.verbose:
+            clear_progress_line()
+            sys.stdout.write(frame_stdout.getvalue())
+            sys.stderr.write(frame_stderr.getvalue())
+            print(f"Moved frame to {destination_path}")
         step_idx += 1
         print_progress(step_idx, total_steps, time_arg)
         t += step_td
+    print(f"Saved {step_idx} frames to {output_dir}")
 
 
 if __name__ == "__main__":

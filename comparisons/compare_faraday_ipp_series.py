@@ -16,7 +16,7 @@ import numpy as np
 from scipy.io import loadmat
 
 from core.missions import mission_output_dir
-from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
+from core.paths import DATA_ROOT, GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
 from core.traj_utils import get_launch_start_from_traj_csv
 from core.time_utils import hhmmss_fractional_to_seconds
 
@@ -30,7 +30,7 @@ def parse_args():
     )
     ap.add_argument(
         "--receiver-dir",
-        default="../receiver_data",
+        default=str(DATA_ROOT / "raw" / "receiver-data" / "asi-mapping"),
         help="Directory containing receiver .mat files under receiver_data/{rocket}/",
     )
     ap.add_argument(

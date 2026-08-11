@@ -15,9 +15,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from core.missions import mission_output_dir
+from core.paths import DATA_ROOT
 
 
-DESPIN_DIR = Path("/Users/anniepflaum/lab317/asi_mapping/GNEISS_E_field_data")
+DESPIN_DIR = DATA_ROOT / "raw" / "rocket" / "gneiss-e-field"
 BRIGHTNESS_CSV = mission_output_dir("GNEISS", color="green") / "brightness_vs_time_101900_102900_step0p05.csv"
 OUTPUT_DIR = mission_output_dir("GNEISS", color="green")
 ROCKETS = ("397", "398")

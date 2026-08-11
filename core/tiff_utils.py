@@ -11,12 +11,15 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
-from core.paths import WORKSPACE_DIR
+from core.paths import IMAGE_DIR
 
 
-GIRAFF_GREEN_CACHE_DIR = WORKSPACE_DIR / "images" / "green" / "VEE" / "GIRAFF"
-GIRAFF_RED_CACHE_DIR = WORKSPACE_DIR / "images" / "red" / "6300" / "VEE" / "GIRAFF"
-GIRAFF_BLUE_CACHE_DIR = WORKSPACE_DIR / "images" / "blue" / "VEE" / "GIRAFF"
+GIRAFF_GREEN_CACHE_DIR = IMAGE_DIR / "green" / "VEE" / "GIRAFF"
+GIRAFF_RED_CACHE_DIR = IMAGE_DIR / "red" / "6300" / "VEE" / "GIRAFF"
+GIRAFF_BLUE_CACHE_DIR = IMAGE_DIR / "blue" / "VEE" / "GIRAFF"
+TIFF_TIMING_CACHE_PATH = Path(__file__).resolve().parents[1] / ".cache" / "tiff_timing_metadata.json"
+TIFF_TIMING_CACHE_VERSION = 1
+_tiff_timing_cache = None
 
 GIRAFF_TIFF_PATHS_BY_COLOR_DATE = {
     "green": {
@@ -192,6 +195,80 @@ def sidecar_log_path(tiff_path):
     return log_path if log_path.exists() else None
 
 
+def _load_tiff_timing_cache():
+    global _tiff_timing_cache
+    if _tiff_timing_cache is not None:
+        return _tiff_timing_cache
+    try:
+        with TIFF_TIMING_CACHE_PATH.open("r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        if payload.get("version") != TIFF_TIMING_CACHE_VERSION:
+            raise ValueError("unsupported cache version")
+        entries = payload.get("entries", {})
+        _tiff_timing_cache = entries if isinstance(entries, dict) else {}
+    except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+        _tiff_timing_cache = {}
+    return _tiff_timing_cache
+
+
+def _write_tiff_timing_cache():
+    TIFF_TIMING_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = TIFF_TIMING_CACHE_PATH.with_name(
+        f"{TIFF_TIMING_CACHE_PATH.name}.{os.getpid()}.tmp"
+    )
+    payload = {
+        "version": TIFF_TIMING_CACHE_VERSION,
+        "entries": _load_tiff_timing_cache(),
+    }
+    with temporary.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, sort_keys=True)
+    temporary.replace(TIFF_TIMING_CACHE_PATH)
+
+
+def _cached_tiff_page_metadata(tiff_path, fallback_frame_interval):
+    resolved = tiff_path.resolve()
+    stat = resolved.stat()
+    key = str(resolved)
+    entry = _load_tiff_timing_cache().get(key)
+    signature = {
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "frame_interval": float(fallback_frame_interval),
+    }
+    if entry is not None and all(entry.get(name) == value for name, value in signature.items()):
+        start_dt = dt.datetime.fromisoformat(entry["start_time"])
+        return {
+            "path": tiff_path,
+            "start_dt": start_dt,
+            "end_dt": dt.datetime.fromisoformat(entry["end_time"]),
+            "n_frames": int(entry["n_frames"]),
+            "frame_interval": float(entry["frame_interval"]),
+            "source": "tiff_pages_cache",
+        }
+
+    start_dt = parse_tiff_start_datetime(tiff_path)
+    with tifffile.TiffFile(tiff_path) as tif:
+        n_frames = len(tif.pages)
+    end_dt = start_dt + dt.timedelta(
+        seconds=(n_frames - 1) * fallback_frame_interval
+    )
+    _load_tiff_timing_cache()[key] = {
+        **signature,
+        "start_time": start_dt.isoformat(),
+        "end_time": end_dt.isoformat(),
+        "n_frames": n_frames,
+    }
+    _write_tiff_timing_cache()
+    return {
+        "path": tiff_path,
+        "start_dt": start_dt,
+        "end_dt": end_dt,
+        "n_frames": n_frames,
+        "frame_interval": fallback_frame_interval,
+        "source": "tiff_pages",
+    }
+
+
 def tiff_timing_metadata(tiff_path, fallback_frame_interval):
     """Return start/end/count/cadence metadata for a TIFF."""
     tiff_path = Path(tiff_path)
@@ -227,17 +304,7 @@ def tiff_timing_metadata(tiff_path, fallback_frame_interval):
             "source": str(log_path),
         }
 
-    start_dt = parse_tiff_start_datetime(tiff_path)
-    with tifffile.TiffFile(tiff_path) as tif:
-        n_frames = len(tif.pages)
-    return {
-        "path": tiff_path,
-        "start_dt": start_dt,
-        "end_dt": start_dt + dt.timedelta(seconds=(n_frames - 1) * fallback_frame_interval),
-        "n_frames": n_frames,
-        "frame_interval": fallback_frame_interval,
-        "source": "tiff_pages",
-    }
+    return _cached_tiff_page_metadata(tiff_path, fallback_frame_interval)
 
 
 def get_giraff_tiff_candidates(date_str, color="green", override_dirs=None):
@@ -267,13 +334,13 @@ def get_giraff_tiff_candidates(date_str, color="green", override_dirs=None):
 def red_image_dirs(site, mission, red_wavelength="6300"):
     wavelength = str(red_wavelength or "6300")
     mission_key = str(mission).upper()
-    dirs = [f"../images/red/{wavelength}/{site}"]
+    dirs = [str(IMAGE_DIR / "red" / wavelength / site)]
     if site == "VEE":
-        dirs.append(f"../images/red/{wavelength}/VEE/{mission_key}")
+        dirs.append(str(IMAGE_DIR / "red" / wavelength / "VEE" / mission_key))
     if wavelength == "6300":
-        dirs.append(f"../images/red/{site}")
+        dirs.append(str(IMAGE_DIR / "red" / site))
         if site == "VEE":
-            dirs.append(f"../images/red/VEE/{mission_key}")
+            dirs.append(str(IMAGE_DIR / "red" / "VEE" / mission_key))
     return dirs
 
 
@@ -282,9 +349,9 @@ def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission=
     Return candidate TIFF paths for a site.
     Priority:
     1) Explicit override directories if provided.
-    2) Auto-discovered TIFFs in ../images/<COLOR>/<SITE>/.
-       Red TIFFs default to ../images/red/6300/<SITE>/ and may be selected
-       from ../images/red/<WAVELENGTH>/<SITE>/.
+    2) Auto-discovered TIFFs in IMAGE_DIR/<COLOR>/<SITE>/.
+       Red TIFFs default to IMAGE_DIR/red/6300/<SITE>/ and may be selected
+       from IMAGE_DIR/red/<WAVELENGTH>/<SITE>/.
        VEE TIFFs may also live in a mission subdirectory.
     """
     if isinstance(override_dirs, str):
@@ -299,9 +366,9 @@ def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission=
     elif color_key == "red":
         dirs_to_search = red_image_dirs(site, mission, red_wavelength=red_wavelength)
     else:
-        dirs_to_search = [f"../images/{color}/{site}"]
+        dirs_to_search = [str(IMAGE_DIR / color_key / site)]
     if site == "VEE" and color_key != "red":
-        alt_dir = f"../images/{color}/VEE/{str(mission).upper()}"
+        alt_dir = str(IMAGE_DIR / color_key / "VEE" / str(mission).upper())
         if alt_dir not in dirs_to_search:
             dirs_to_search.append(alt_dir)
 

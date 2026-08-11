@@ -60,6 +60,9 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
 apex = Apex()
+_SKYMAP_CACHE = {}
+_REFERENCE_NORM_CACHE = {}
+_PFISR_CACHE = {}
 
 
 def calibrate_image_for_map(site, im_raw, skymaps, color):
@@ -84,6 +87,54 @@ def wavelength_title(color, red_wavelength="6300"):
         }
         return red_labels.get(str(red_wavelength), f"{red_wavelength}nm")
     return str(color)
+
+
+def cached_skymaps(selected_sites, color, mission):
+    key = (tuple(sorted(selected_sites)), str(color).lower(), str(mission).upper())
+    if key not in _SKYMAP_CACHE:
+        skymaps = load_skymaps(selected_sites, color=color, mission=mission)
+        build_overlap_masks(skymaps)
+        _SKYMAP_CACHE[key] = skymaps
+    return _SKYMAP_CACHE[key]
+
+
+def cached_reference_norm_limits(
+    skymaps,
+    selected_sites,
+    date,
+    ref_time_str,
+    color,
+    frame_interval,
+    colorbar_scale,
+    mission,
+    red_wavelength,
+    upper_percentile,
+):
+    key = (
+        tuple(sorted(selected_sites)),
+        str(date),
+        str(ref_time_str),
+        str(color).lower(),
+        float(frame_interval),
+        str(colorbar_scale),
+        str(mission).upper(),
+        str(red_wavelength),
+        float(upper_percentile),
+    )
+    if key not in _REFERENCE_NORM_CACHE:
+        _REFERENCE_NORM_CACHE[key] = calibrated_reference_norm_limits(
+            skymaps,
+            selected_sites,
+            date,
+            ref_time_str,
+            color,
+            frame_interval,
+            colorbar_scale=colorbar_scale,
+            mission=mission,
+            red_wavelength=red_wavelength,
+            upper_percentile=upper_percentile,
+        )
+    return _REFERENCE_NORM_CACHE[key]
 
 
 def calibrated_reference_norm_limits(
@@ -149,7 +200,7 @@ def calibrated_reference_norm_limits(
     return vmin, vmax
 
 
-def main():
+def main(argv=None):
     """
     Main entry point: parses command-line arguments, loads skymaps, processes images for each site,
     normalizes and selects frames, overlays PFISR and rocket trajectories, and saves the mapped output.
@@ -185,7 +236,13 @@ def main():
     ap.add_argument("--plot-ipps", action="store_true", help="Plot receiver ionospheric pierce points on the map")
     ap.add_argument("--plot-geodetic-traj", dest="plot_geodetic_traj", action="store_true", help="Overlay the rocket trajectories in geodetic coordinates as blue traces")
     ap.add_argument("--plot-ezie", action="store_true", help="Overlay EZIE MEM trajectories mapped along magnetic field lines to 110 km")
-    args = ap.parse_args()
+    ap.add_argument(
+        "--render-mode",
+        choices=["auto", "pcolor", "pcolormesh", "points", "regrid"],
+        default="pcolormesh",
+        help="ASI rendering method; auto uses pcolor for green and regrid for red",
+    )
+    args = ap.parse_args(argv)
     shared_norm = not args.no_shared_norm
     try:
         args.mission, date = resolve_mission_and_date(args.mission, args.rocket)
@@ -209,10 +266,7 @@ def main():
     # --- Load geographic mapping for each ASI site ---
     selected_sites = set([s.upper() for s in args.sites])
     validate_color_and_sites(ap, args.mission, args.color, selected_sites, giraff_message_site="VEE TIFFs and PKR PNGs")
-    skymaps = load_skymaps(selected_sites, color=args.color, mission=args.mission)
-
-    # --- Calculate masks for overlapping images between sites ---
-    build_overlap_masks(skymaps)
+    skymaps = cached_skymaps(selected_sites, args.color, args.mission)
 
     imgs = dict()  # Stores normalized display images for each site
     imgs_raw = dict()  # Stores raw image values for brightness sampling
@@ -224,12 +278,17 @@ def main():
     time_token = sanitize_time_for_filename(time_str)
 
     # --- Retrieve PFISR data for overlay ---
-    pfisr = {}
-    try:
-        pfisr = retrieve_pfisr(apex=apex, map_alt_km=mapped_apex_height(args.color))
-    except Exception as e:
-        if "resolvedvelocities module is not installed" not in str(e):
-            print(f"Could not retrieve PFISR data: {e}")
+    pfisr_key = float(mapped_apex_height(args.color))
+    if pfisr_key not in _PFISR_CACHE:
+        try:
+            _PFISR_CACHE[pfisr_key] = retrieve_pfisr(
+                apex=apex, map_alt_km=pfisr_key
+            )
+        except Exception as e:
+            if "resolvedvelocities module is not installed" not in str(e):
+                print(f"Could not retrieve PFISR data: {e}")
+            _PFISR_CACHE[pfisr_key] = {}
+    pfisr = _PFISR_CACHE[pfisr_key]
 
     frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
 
@@ -237,17 +296,17 @@ def main():
     fixed_norm_limits = None
     if shared_norm:
         reference_norm_time = reference_normalization_time(args.mission, date, time_str)
-        fixed_norm_limits = calibrated_reference_norm_limits(
+        fixed_norm_limits = cached_reference_norm_limits(
             skymaps,
             selected_sites,
             date,
             reference_norm_time,
             args.color,
             frame_interval,
-            colorbar_scale=args.colorbar_scale,
-            mission=args.mission,
-            red_wavelength=args.red_wavelength,
-            upper_percentile=args.vmax,
+            args.colorbar_scale,
+            args.mission,
+            args.red_wavelength,
+            args.vmax,
         )
     for site in ['ARV', 'VEE', 'BVR']:
         if site not in selected_sites:
@@ -285,6 +344,7 @@ def main():
     # --- Compose output path for mapped image, include plotting mode ---
     sites_str = '_'.join(sorted(selected_sites))
     color = args.color
+    render_suffix = "" if args.render_mode == "auto" else f"_{args.render_mode}"
     output_path = mission_output_dir(args.mission, color=args.color, date=date) / f"calibrated_{color}_{sites_str}_{date}_{time_token}.png"
 
     # --- Run downstream plotting even if no TIFFs were found ---
@@ -312,10 +372,12 @@ def main():
         upper_percentile=args.vmax,
         colorbar_label="Rayleighs",
         channel_title=wavelength_title(args.color, args.red_wavelength),
+        render_mode=args.render_mode,
     )
 
     tocall = time.time()
     print(f"Total run time: {tocall - ticall:.2f} s")
+    return output_path
 
 if __name__ == "__main__":
     main()

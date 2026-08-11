@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
-from core.paths import WORKSPACE_DIR
+from core.paths import IMAGE_DIR
 from core.tiff_utils import parse_giraff_log
 
 
@@ -80,7 +80,7 @@ def cache_paths_for_tiff(tiff_path, log_meta):
     start_token, end_token = GIRAFF_CACHE_WINDOWS[date_key]
     filter_token = filter_token_from_tiff_or_log(tiff_path, log_meta)
     color = FILTER_COLORS[filter_token]
-    cache_dir = WORKSPACE_DIR / "images" / color / "VEE" / "GIRAFF"
+    cache_dir = IMAGE_DIR / color / "VEE" / "GIRAFF"
     source_token = source_token_from_tiff(tiff_path)
     base = f"{source_token}_{start_token}_{end_token}"
     return {

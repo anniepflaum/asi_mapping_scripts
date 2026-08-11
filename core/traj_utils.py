@@ -3,6 +3,7 @@
 
 import csv
 import datetime as dt
+from functools import lru_cache
 from pathlib import Path
 import re
 from xml.etree import ElementTree as ET
@@ -264,15 +265,26 @@ def trajectory_marker_second(filename):
     return 30.0
 
 
+@lru_cache(maxsize=16)
+def _load_mapped_traj(filename, color):
+    utc_times, _flight_times, lats, lons, alts = load_traj_records(filename)
+    lats, lons, _ = apex.map_to_height(
+        lats, lons, alts, mapped_apex_height(color)
+    )
+    idx = fixed_utc_minute_marker_indices(
+        utc_times, second_of_minute=trajectory_marker_second(filename)
+    )
+    return utc_times, lats, lons, alts, idx
+
+
 def load_traj(filename, map_time=None, color="green"):
     """
     Load rocket trajectory from a GPS export file.
     Map lat/lon to the color-specific altitude and optionally return the nearest map-time point.
     """
-    utc_times, flight_times, lats, lons, alts = load_traj_records(filename)
-
-    lats, lons, _ = apex.map_to_height(lats, lons, alts, mapped_apex_height(color))
-    idx = fixed_utc_minute_marker_indices(utc_times, second_of_minute=trajectory_marker_second(filename))
+    utc_times, lats, lons, alts, idx = _load_mapped_traj(
+        str(filename), str(color).lower()
+    )
     latsm = lats[idx].squeeze()
     lonsm = lons[idx].squeeze()
     aidx = np.argmax(alts)

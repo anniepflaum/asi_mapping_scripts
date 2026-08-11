@@ -14,7 +14,6 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
-from core.paths import WORKSPACE_DIR
 from core.tiff_utils import get_site_tiff_candidates, tiff_timing_metadata
 from core.time_utils import parse_date_and_time, sanitize_time_for_filename
 

@@ -18,7 +18,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from core.constants import DEFAULT_GREEN_ALT_KM, FRAME_INTERVAL_SECONDS_GREEN
 from core.masks import build_overlap_masks
 from core.missions import mission_output_dir, trajectory_configs, trajectory_display_labels
-from core.paths import WORKSPACE_DIR
+from core.paths import IMAGE_DIR
 from core.series_utils import count_steps, format_time_arg, load_tiff_frame_with_metadata, print_progress
 from core.skymaps import load_skymaps
 from core.time_utils import parse_date_and_time, sanitize_time_for_filename
@@ -38,7 +38,7 @@ FILL_VALUE = np.float32(np.nan)
 def parse_args():
     ap = argparse.ArgumentParser(
         description=(
-            "Build one native-grid GNEISS ASI map file from ../images/green/{site} TIFF "
+            "Build one native-grid GNEISS ASI map file from ASI_IMAGE_ROOT/green/{site} TIFF "
             "chunks, including timestamps, mapped pixel coordinates, and trajectory data."
         )
     )
@@ -47,7 +47,7 @@ def parse_args():
     ap.add_argument("--end", default=DEFAULT_END, help="End time HHMMSS(.fraction)")
     ap.add_argument("--step", type=float, default=DEFAULT_STEP_S, help="Output cadence in seconds")
     ap.add_argument("--color", choices=("green",), default="green", help="ASI color channel")
-    ap.add_argument("--input-dir", type=Path, default=None, help="Input image root; default: ../images/green with site subfolders")
+    ap.add_argument("--input-dir", type=Path, default=None, help="Input image root; default: ASI_IMAGE_ROOT/<color> with site subfolders")
     ap.add_argument("--output", type=Path, default=None, help="Output NetCDF path")
     ap.add_argument(
         "--bounds",
@@ -107,7 +107,7 @@ def load_site_tiffs(input_root, date, color):
         )
         metadata = build_tiff_metadata(candidates, FRAME_INTERVAL_SECONDS_GREEN)
         if not metadata:
-            search_root = input_root if input_root is not None else WORKSPACE_DIR / "images" / color / site
+            search_root = input_root if input_root is not None else IMAGE_DIR / color / site
             raise FileNotFoundError(f"No TIFFs found for {site} in {search_root}")
         first_path = metadata[0]["path"]
         with tifffile.TiffFile(first_path) as tif:
@@ -310,7 +310,7 @@ def write_netcdf(path, args, times, skymaps, valid_masks, tiffs, traj, bounds):
 
 def main():
     args = parse_args()
-    input_root = args.input_dir or WORKSPACE_DIR / "images" / args.color
+    input_root = args.input_dir or IMAGE_DIR / args.color
     output_path = args.output or default_output_path(args)
     times = build_times(args.date, args.start, args.end, args.step)
     tiffs = load_site_tiffs(input_root, args.date, args.color)

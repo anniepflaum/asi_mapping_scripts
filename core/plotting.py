@@ -350,6 +350,21 @@ def draw_image_pcolor(axis, lon, lat, image, image_cmap, image_norm, vmin, vmax,
     return axis.pcolor(lon, lat, image, cmap=image_cmap, norm=image_norm, zorder=zorder, transform=transform)
 
 
+def draw_image_pcolormesh(axis, lon, lat, image, image_cmap, image_norm, vmin, vmax, transform, zorder=3):
+    kwargs = {
+        "cmap": image_cmap,
+        "shading": "auto",
+        "zorder": zorder,
+        "transform": transform,
+    }
+    if image_norm is None:
+        if vmin is not None:
+            kwargs.update({"vmin": vmin, "vmax": vmax})
+    else:
+        kwargs["norm"] = image_norm
+    return axis.pcolormesh(lon, lat, image, **kwargs)
+
+
 def draw_image_points(axis, lon, lat, image, image_cmap, image_norm, vmin, vmax, transform, zorder=3):
     valid = np.isfinite(lon) & np.isfinite(lat) & np.isfinite(image)
     if not np.any(valid):
@@ -434,6 +449,9 @@ def draw_images(ax, ax1, skymaps, imgs, side_images, main_images, image_cmap, sh
         elif render_mode == "regrid":
             main_handle = draw_image_regrid(ax, lon, lat, main_img, image_cmap, image_norm, vmin, vmax, axtrans)
             draw_image_regrid(ax1[site], lon, lat, side_img, image_cmap, image_norm, vmin, vmax, axtrans1[site])
+        elif render_mode == "pcolormesh":
+            main_handle = draw_image_pcolormesh(ax, lon, lat, main_img, image_cmap, image_norm, vmin, vmax, axtrans)
+            draw_image_pcolormesh(ax1[site], lon, lat, side_img, image_cmap, image_norm, vmin, vmax, axtrans1[site])
         else:
             main_handle = draw_image_pcolor(ax, lon, lat, main_img, image_cmap, image_norm, vmin, vmax, axtrans)
             draw_image_pcolor(ax1[site], lon, lat, side_img, image_cmap, image_norm, vmin, vmax, axtrans1[site])
@@ -547,11 +565,6 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
         cax = fig.add_subplot(gs[:, 1])
         cbar = fig.colorbar(im_handle, cax=cax, orientation="vertical")
         cbar.set_label(colorbar_label or channel_label(color))
-        for tag, bright in brightness_markers or []:
-            y = np.clip(bright["percentile"] / 100.0, 0.0, 1.0)
-            cbar.ax.plot([0.0, 1.0], [y, y], transform=cbar.ax.transAxes, color="black", linewidth=4.0, zorder=1000, solid_capstyle="butt", clip_on=False)
-            cbar.ax.plot([0.0, 1.0], [y, y], transform=cbar.ax.transAxes, color="white", linewidth=2.2, zorder=1001, solid_capstyle="butt", clip_on=False)
-            cbar.ax.text(-0.05, y, f"{tag}: {bright['site']} P{bright['percentile']:.1f}", transform=cbar.ax.transAxes, color="black", fontsize=8, va="center", ha="right", clip_on=False)
     elif im_handle is None:
         ax.text(
             0.01,
@@ -575,6 +588,7 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=150)
+    plt.close(fig)
     print(f"Saved mapped image to {output_path}")
 
 

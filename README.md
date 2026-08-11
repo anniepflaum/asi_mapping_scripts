@@ -29,6 +29,15 @@ GIRAFF will stop with an argument error.
 
 ## Layout
 
+Paths are configurable through `ASI_WORKSPACE_ROOT`, `ASI_IMAGE_ROOT`, and
+`ASI_OUTPUT_ROOT`; `LAB317_OUTPUT_ROOT` provides the shared output fallback.
+See `config/example.env`. The image archive now defaults to
+`$LAB317_DATA_ROOT/raw/asi/images`, shared starmaps and receiver metadata to
+`$LAB317_DATA_ROOT/reference`, trajectories to
+`$LAB317_DATA_ROOT/raw/rocket/trajectories`, and mapped products to
+`$LAB317_OUTPUT_ROOT/asi-mapping/mapped`. Checksum catalogs under
+`data-manifests/` preserve the verified migration baseline.
+
 ```text
 scripts/
   map_asi_archive.py
@@ -47,7 +56,7 @@ scripts/
     traj_utils.py
     ...
 
-../trajectories/
+$LAB317_DATA_ROOT/raw/rocket/trajectories/
   GNEISS/
     36397_GPS_Time_Export_01.csv
     36398_GPS_Time_Export_00.csv
@@ -55,10 +64,10 @@ scripts/
     36380_MAIN_PAYLOAD_GPS.xlsx
     36381_MAIN_PAYLOAD_GPS.xlsx
 
-../mapped/
-../images/
-../receivers.csv
-../starmap/
+$LAB317_OUTPUT_ROOT/asi-mapping/mapped/
+$LAB317_DATA_ROOT/raw/asi/images/
+$LAB317_DATA_ROOT/reference/asi-mapping/receivers.csv
+$LAB317_DATA_ROOT/reference/starmaps/
   green/
     ARV/
     BVR/
@@ -248,20 +257,20 @@ Compares GNEISS IPP brightness series against receiver `.mat` files.
 
 ```bash
 python3 compare_faraday_ipp_series.py \
-  --ipp-csv ../mapped/green/GNEISS/ipps_brightness_series_20260210_101900_102848_step0p05.csv \
-  --receiver-dir ../receiver_data
+  --ipp-csv "$LAB317_OUTPUT_ROOT/asi-mapping/mapped/green/GNEISS/ipps_brightness_series_20260210_101900_102848_step0p05.csv" \
+  --receiver-dir "$LAB317_DATA_ROOT/raw/receiver-data/asi-mapping"
 ```
 
 ## Inputs
 
-Expected workspace inputs:
-- `../trajectories/GNEISS/36397_GPS_Time_Export_01.csv`
-- `../trajectories/GNEISS/36398_GPS_Time_Export_00.csv`
-- `../trajectories/GIRAFF/36380_MAIN_PAYLOAD_GPS.xlsx`
-- `../trajectories/GIRAFF/36381_MAIN_PAYLOAD_GPS.xlsx`
-- `../receivers.csv`
-- `../starmap/{color}/{site}/...`
-- local TIFF archives under `../images/...` or the hard-coded GIRAFF source/cache paths in `core/tiff_utils.py`
+Expected shared inputs:
+- `$LAB317_DATA_ROOT/raw/rocket/trajectories/GNEISS/36397_GPS_Time_Export_01.csv`
+- `$LAB317_DATA_ROOT/raw/rocket/trajectories/GNEISS/36398_GPS_Time_Export_00.csv`
+- `$LAB317_DATA_ROOT/raw/rocket/trajectories/GIRAFF/36380_MAIN_PAYLOAD_GPS.xlsx`
+- `$LAB317_DATA_ROOT/raw/rocket/trajectories/GIRAFF/36381_MAIN_PAYLOAD_GPS.xlsx`
+- `$LAB317_DATA_ROOT/reference/asi-mapping/receivers.csv`
+- `$LAB317_DATA_ROOT/reference/starmaps/{color}/{site}/...`
+- local TIFF archives under `$LAB317_DATA_ROOT/raw/asi/images/...` or a direct `ASI_IMAGE_ROOT` override
 - coastline assets under `coast/`
 
 PFISR retrieval is optional. If PFISR download or the `resolvedvelocities`
@@ -283,9 +292,9 @@ The `20250209` cache window is expected to cover `08:31:40` to `08:44:15`.
 Outputs are written under color, mission, and for GIRAFF rocket directories:
 
 ```text
-../mapped/<color>/GNEISS/
-../mapped/<color>/GIRAFF/380/
-../mapped/<color>/GIRAFF/381/
+$LAB317_OUTPUT_ROOT/asi-mapping/mapped/<color>/GNEISS/
+$LAB317_OUTPUT_ROOT/asi-mapping/mapped/<color>/GIRAFF/380/
+$LAB317_OUTPUT_ROOT/asi-mapping/mapped/<color>/GIRAFF/381/
 ```
 
 Examples:
