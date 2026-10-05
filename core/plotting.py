@@ -12,6 +12,7 @@ from scipy.interpolate import griddata
 import magcoordmap as mcm
 from core.brightness import best_rocket_brightness
 from core.calc_ipp import calc_ipp
+from core.magnetic import get_mission_apex, mission_date_key
 from core.constants import NORMALIZATION_UPPER_PERCENTILE
 from core.ezie import (
     EZIE_MEM_COLORS,
@@ -41,16 +42,6 @@ from core.traj_utils import (
 LATLON_GRID_ZORDER = 30
 
 
-def scale_uv(lon, lat, u, v):
-    """
-    Adjust vector scaling/rotation for cartopy quiver plots to account for latitude distortion.
-    """
-    us = u / np.cos(lat * np.pi / 180.0)
-    vs = v
-    sf = np.sqrt(u ** 2 + v ** 2) / np.sqrt(us ** 2 + vs ** 2)
-    return us * sf, vs * sf
-
-
 def channel_label(color):
     return "Red Channel Intensity" if str(color).lower() == "red" else "Green Channel Intensity"
 
@@ -67,12 +58,13 @@ def empty_geodetic_traj_context():
     return {"lat": None, "lon": None, "lat_minute": None, "lon_minute": None, "lat_map": None, "lon_map": None}
 
 
-def load_single_trajectory_context(traj_path, map_time, color, receivers, plot_ipps, rocket_label):
+def load_single_trajectory_context(traj_path, map_time, color, receivers, plot_ipps, rocket_label, date=None):
     try:
         lat, lon, latm, lonm, _lata, _lona, lat_map, lon_map = load_traj(
             str(traj_path),
             map_time=map_time,
             color=color,
+            date=date,
         )
     except FileNotFoundError:
         print_warning(f"{rocket_label} trajectory file not found: {traj_path}. Trajectory overlay will be skipped.")
@@ -81,7 +73,7 @@ def load_single_trajectory_context(traj_path, map_time, color, receivers, plot_i
     ipps = []
     if plot_ipps:
         try:
-            rocket_geo = lookup_traj_geodetic_position(build_traj_lookup(str(traj_path), color=color), map_time)
+            rocket_geo = lookup_traj_geodetic_position(build_traj_lookup(str(traj_path), color=color, date=date), map_time)
             ipps = compute_receiver_ipps(receivers, rocket_geo, mapped_apex_height(color))
         except FileNotFoundError:
             print_warning(f"{rocket_label} trajectory file not found while computing IPPs: {traj_path}. IPP overlay will be skipped.")
@@ -226,6 +218,7 @@ def build_time_label(args):
 
 
 def load_trajectory_context(map_time, color, receivers, plot_ipps, mission="GNEISS", date=None):
+    date = mission_date_key(date, mission)
     return {
         cfg.key: load_single_trajectory_context(
             cfg.path,
@@ -234,6 +227,7 @@ def load_trajectory_context(map_time, color, receivers, plot_ipps, mission="GNEI
             receivers,
             plot_ipps,
             cfg.label,
+            date=date,
         )
         for cfg in trajectory_configs(mission, date=date)
     }
@@ -498,9 +492,9 @@ def draw_geodetic_trajectory(ax, geodetic_traj_ctx, axtrans, mission="GNEISS"):
             ax.scatter(traj["lon_map"], traj["lat_map"], color=color, s=40, marker="o", transform=axtrans, zorder=7)
 
 
-def draw_ezie_trajectories(ax, map_time, axtrans):
+def draw_ezie_trajectories(ax, map_time, axtrans, date=None):
     try:
-        tracks = load_ezie_mem_tracks()
+        tracks = load_ezie_mem_tracks(date=date)
     except FileNotFoundError as exc:
         print_warning(f"EZIE MEM ephemeris file not found: {exc.filename}. EZIE overlay will be skipped.")
         return
@@ -592,7 +586,13 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None, plot_ezie=False, render_mode="auto", colorbar_label=None, channel_title=None):
+def plot_map(skymaps, imgs, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None, plot_ezie=False, render_mode="auto", colorbar_label=None, channel_title=None):
+    map_date = mission_date_key(map_date, mission)
+    mission_apex = get_mission_apex(map_date)
+    if apex is None:
+        apex = mission_apex
+    else:
+        apex.set_epoch(mission_apex.year)
     receivers = filter_receivers_for_mission(load_receivers(warn=print_warning), mission) if (plot_receivers or plot_ipps) else []
     if pretty:
         fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex, mapped_apex_height(color))
@@ -633,7 +633,7 @@ def plot_map(skymaps, imgs, pfisr, output_path=None, map_time=None, map_date=Non
     if plot_geodetic_traj:
         draw_geodetic_trajectory(ax, load_geodetic_trajectory_context(map_time, mission=mission, date=map_date), axt, mission=mission)
     if plot_ezie:
-        draw_ezie_trajectories(ax, map_time, axt)
+        draw_ezie_trajectories(ax, map_time, axt, date=map_date)
     if plot_receivers:
         draw_receivers(ax, receivers, axt)
     draw_site_markers(ax, site_markers, axt)

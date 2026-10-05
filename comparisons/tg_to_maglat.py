@@ -3,16 +3,15 @@
 
 import argparse
 import csv
-import datetime as dt
 from pathlib import Path
 import sys
 
 import numpy as np
-from apexpy import Apex
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.missions import GNEISS_DEFAULT_DATE, mission_output_dir
+from core.magnetic import get_mission_apex
 from core.paths import GNEISS_LEFT_TRAJECTORY_PATH, GNEISS_RIGHT_TRAJECTORY_PATH
 from core.time_utils import hhmmss_fractional_to_seconds
 from core.traj_utils import get_launch_start_from_traj_csv, load_traj_records
@@ -127,7 +126,7 @@ def parse_args():
 def main():
     args = parse_args()
     output_path = Path(args.output) if args.output else default_output_path()
-    apex = Apex(date=dt.datetime.strptime(GNEISS_DEFAULT_DATE, "%Y%m%d"))
+    apex = get_mission_apex(GNEISS_DEFAULT_DATE)
     series_by_rocket = {
         rocket: resample_magnetic_trajectory(rocket, STEP_SECONDS, apex)
         for rocket in ("397", "398")

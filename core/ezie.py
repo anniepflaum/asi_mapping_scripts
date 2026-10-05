@@ -5,9 +5,9 @@ import datetime as dt
 from collections import defaultdict
 
 import numpy as np
-from apexpy import Apex
 
 from core.constants import DEFAULT_GREEN_ALT_KM
+from core.magnetic import get_mission_apex
 from core.paths import EZIE_MEM_EPHEMERIS_PATH
 from core.time_utils import hhmmss_fractional_to_seconds
 
@@ -29,9 +29,6 @@ EZIE_MEM_MARKERS = {
     "2": "s",
     "3": "D",
 }
-
-_apex = Apex()
-
 
 def parse_iso_seconds_of_day(value):
     sample_dt = dt.datetime.fromisoformat(value)
@@ -56,7 +53,7 @@ def ezie_sort_key(key):
     return spacecraft_order, mem_order
 
 
-def load_ezie_mem_tracks(path=EZIE_MEM_EPHEMERIS_PATH, map_alt_km=DEFAULT_GREEN_ALT_KM):
+def load_ezie_mem_tracks(path=EZIE_MEM_EPHEMERIS_PATH, map_alt_km=DEFAULT_GREEN_ALT_KM, date=None):
     grouped = defaultdict(list)
     with open(path, "r", encoding="utf-8", newline="") as fd:
         reader = csv.DictReader(fd)
@@ -76,6 +73,7 @@ def load_ezie_mem_tracks(path=EZIE_MEM_EPHEMERIS_PATH, map_alt_km=DEFAULT_GREEN_
                 continue
             grouped[(row["spacecraft"], row["mem_index"])].append(row)
 
+    apex = get_mission_apex(date)
     tracks = []
     for spacecraft, mem_index in sorted(grouped, key=ezie_sort_key):
         rows = grouped[(spacecraft, mem_index)]
@@ -88,7 +86,7 @@ def load_ezie_mem_tracks(path=EZIE_MEM_EPHEMERIS_PATH, map_alt_km=DEFAULT_GREEN_
         lats = lats[order]
         lons = lons[order]
         alts = alts[order]
-        mapped_lats, mapped_lons, _mapped_alts = _apex.map_to_height(lats, lons, alts, map_alt_km)
+        mapped_lats, mapped_lons, _mapped_alts = apex.map_to_height(lats, lons, alts, map_alt_km)
         mem_label = f"{spacecraft} MEM{mem_index}"
         tracks.append(
             {

@@ -25,7 +25,6 @@ import os
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 
 import argparse
-from apexpy import Apex
 import datetime as dt
 import time
 import matplotlib
@@ -35,6 +34,7 @@ matplotlib.use("Agg")
 
 from core.calibration import BACKGROUND_EDGE_BUFFER_PX, calibrate_image, calibration_factor
 from core.masks import build_overlap_masks
+from core.magnetic import get_mission_apex
 from core.constants import (
     FRAME_INTERVAL_SECONDS_GREEN,
     FRAME_INTERVAL_SECONDS_RED,
@@ -43,7 +43,7 @@ from core.constants import (
 )
 from core.plot_norm import compute_linear_image_limits, compute_log_image_limits, reference_normalization_time
 from core.plotting import plot_map
-from core.remote_data import load_pkr_image, retrieve_pfisr
+from core.remote_data import load_pkr_image
 from core.skymaps import load_skymaps
 from core.missions import default_sites, mission_output_dir, resolve_mission_and_date, validate_color_and_sites
 from core.time_utils import (
@@ -52,17 +52,14 @@ from core.time_utils import (
     sanitize_time_for_filename,
 )
 from core.tiff_utils import get_site_tiff_candidates, load_best_frame_from_tiffs
-from core.traj_utils import mapped_apex_height
 
 # Suppress runtime and user warnings
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-apex = Apex()
 _SKYMAP_CACHE = {}
 _REFERENCE_NORM_CACHE = {}
-_PFISR_CACHE = {}
 
 
 def calibrate_image_for_map(site, im_raw, skymaps, color):
@@ -203,7 +200,7 @@ def calibrated_reference_norm_limits(
 def main(argv=None):
     """
     Main entry point: parses command-line arguments, loads skymaps, processes images for each site,
-    normalizes and selects frames, overlays PFISR and rocket trajectories, and saves the mapped output.
+    normalizes and selects frames, overlays rocket trajectories, and saves the mapped output.
     """
     ticall = time.time()
     # --- Parse command-line arguments ---
@@ -249,6 +246,7 @@ def main(argv=None):
     except ValueError as exc:
         ap.error(str(exc))
     args.date = date
+    apex = get_mission_apex(date)
     if args.sites is None:
         args.sites = default_sites(args.mission)
     try:
@@ -266,6 +264,11 @@ def main(argv=None):
     # --- Load geographic mapping for each ASI site ---
     selected_sites = set([s.upper() for s in args.sites])
     validate_color_and_sites(ap, args.mission, args.color, selected_sites, giraff_message_site="VEE TIFFs and PKR PNGs")
+    print(
+        f"Preparing {args.mission} {args.color} map for {date} {args.time}: "
+        "loading starmaps and building overlap masks...",
+        flush=True,
+    )
     skymaps = cached_skymaps(selected_sites, args.color, args.mission)
 
     imgs = dict()  # Stores normalized display images for each site
@@ -277,25 +280,16 @@ def main(argv=None):
         ap.error(str(exc))
     time_token = sanitize_time_for_filename(time_str)
 
-    # --- Retrieve PFISR data for overlay ---
-    pfisr_key = float(mapped_apex_height(args.color))
-    if pfisr_key not in _PFISR_CACHE:
-        try:
-            _PFISR_CACHE[pfisr_key] = retrieve_pfisr(
-                apex=apex, map_alt_km=pfisr_key
-            )
-        except Exception as e:
-            if "resolvedvelocities module is not installed" not in str(e):
-                print(f"Could not retrieve PFISR data: {e}")
-            _PFISR_CACHE[pfisr_key] = {}
-    pfisr = _PFISR_CACHE[pfisr_key]
-
     frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
 
     # --- Process TIFF-backed sites: search multiple tiles and select closest frame ---
     fixed_norm_limits = None
     if shared_norm:
         reference_norm_time = reference_normalization_time(args.mission, date, time_str)
+        print(
+            f"Computing shared brightness normalization at {reference_norm_time}...",
+            flush=True,
+        )
         fixed_norm_limits = cached_reference_norm_limits(
             skymaps,
             selected_sites,
@@ -311,6 +305,7 @@ def main(argv=None):
     for site in ['ARV', 'VEE', 'BVR']:
         if site not in selected_sites:
             continue
+        print(f"Loading {site} {args.color} image at {time_str}...", flush=True)
         try:
             tiff_candidates = get_site_tiff_candidates(
                 site,
@@ -348,10 +343,10 @@ def main(argv=None):
     output_path = mission_output_dir(args.mission, color=args.color, date=date) / f"calibrated_{color}_{sites_str}_{date}_{time_token}.png"
 
     # --- Run downstream plotting even if no TIFFs were found ---
+    print(f"Rendering map to {output_path}...", flush=True)
     plot_map(
         skymaps,
         imgs,
-        pfisr,
         output_path=output_path,
         map_time=args.time,
         map_date=date,

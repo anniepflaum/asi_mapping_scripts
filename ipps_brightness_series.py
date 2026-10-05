@@ -415,7 +415,7 @@ def main():
 
     traj_configs = trajectory_config_tuples(args.mission, date=args.date)
     traj_lookups = {
-        key: build_traj_lookup(str(path), color=args.color)
+        key: build_traj_lookup(str(path), color=args.color, date=args.date)
         for key, _tag, _label, path in traj_configs
     }
     rocket_labels = [tag for _key, tag, _label, _path in traj_configs]

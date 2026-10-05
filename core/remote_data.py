@@ -5,21 +5,10 @@ from pathlib import Path
 
 from core.paths import IMAGE_DIR
 
-import h5py
 import numpy as np
 import requests
 from PIL import Image
-from apexpy import Apex
-from core.constants import DEFAULT_GREEN_ALT_KM
 from core.fetch_url import closest_amisr_png_url
-
-try:
-    from resolvedvelocities.ResolveVectorsLat import ResolveVectorsLat
-except ImportError:
-    ResolveVectorsLat = None
-
-
-CORE_DIR = Path(__file__).resolve().parent
 PKR_LOCAL_ROOT = IMAGE_DIR
 PKR_FILENAME_RE = re.compile(r"^PFRR_(\d{8})_(\d{6})_(0558|0630)\.png$", re.IGNORECASE)
 
@@ -110,43 +99,3 @@ def load_pkr_image(date, time, color="green", verbose=True):
 
     url = closest_amisr_png_url("PKR", date, time, color=color)
     return retrieve_image(url, verbose=verbose), url, pkr_png_datetime_from_source(url)
-
-
-def retrieve_pfisr(apex=None, map_alt_km=DEFAULT_GREEN_ALT_KM):
-    """
-    Download and process PFISR data.
-    Returns electron density, velocity, and location arrays for plotting.
-    """
-    if ResolveVectorsLat is None:
-        raise ImportError("resolvedvelocities module is not installed")
-    if apex is None:
-        apex = Apex()
-    url = "https://amisr.com/realtime/plots/fitted/single/dtc3/current.h5"
-    resp = requests.get(url, stream=True)
-    resp.raise_for_status()
-    with open("pfisr_latest.h5", "wb") as fd:
-        for chunk in resp.iter_content(chunk_size=128):
-            fd.write(chunk)
-    with h5py.File("pfisr_latest.h5", "r") as h5:
-        ne = h5["FittedParams/Ne"][:]
-        dne = h5["FittedParams/dNe"][:]
-        glat = h5["Geomag/Latitude"][:]
-        glon = h5["Geomag/Longitude"][:]
-        galt = h5["Geomag/Altitude"][:]
-    ne[dne > ne] = np.nan
-    vvels = ResolveVectorsLat(str(CORE_DIR / "vvels_config.ini"))
-    vvels.transform()
-    vvels.bin_data_mlat()
-    vvels.compute_vector_velocity()
-    vvels.compute_electric_field()
-    vvels.compute_geodetic_output()
-    glat, glon, _ = apex.map_to_height(glat, glon, galt / 1000.0, map_alt_km)
-    aidx = np.argmin(np.abs(vvels.outalt - map_alt_km))
-    vv = vvels.Velocity_gd[0, aidx, :, :]
-    vm = vvels.Vgd_mag[0, aidx, :]
-    ve = vvels.Vgd_mag_err[0, aidx, :]
-    vlat = vvels.bin_glat[aidx, :]
-    vlon = vvels.bin_glon[aidx, :]
-    vv[ve > vm, :] = [np.nan, np.nan, np.nan]
-    vm[ve > vm] = np.nan
-    return {"ne": ne, "glat": glat, "glon": glon, "vel": vv, "mag": vm, "vlat": vlat, "vlon": vlon}

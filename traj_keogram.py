@@ -408,7 +408,7 @@ def main():
             ap.error(f"No trajectory is configured for --rocket {args.rocket}")
     traj_data = []
     for key, tag, label, path in traj_configs:
-        lookup = build_traj_lookup(str(path), color=args.color)
+        lookup = build_traj_lookup(str(path), color=args.color, date=args.date)
         lats, lons, flight_times = resample_traj_by_time(lookup, args.samples)
         launch_start = get_launch_start_from_traj_csv(str(path))
         launch_dt = parse_date_and_time(args.date, launch_start) if launch_start else None

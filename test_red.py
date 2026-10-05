@@ -2,13 +2,11 @@
 """Plot individual red-channel ASI maps with zenith markers."""
 
 import argparse
-import datetime as dt
 import os
 from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 
-from apexpy import Apex
 import matplotlib
 
 matplotlib.use("Agg")
@@ -21,6 +19,7 @@ from core.constants import (
     NORMALIZATION_UPPER_PERCENTILE,
 )
 from core.masks import build_overlap_masks
+from core.magnetic import get_mission_apex, mission_date_key
 from core.paths import COAST_LAT_PATH, COAST_LON_PATH
 from core.plotting import (
     choose_image_cmap,
@@ -35,14 +34,13 @@ from map_asi_archive import calibrate_image_for_map, calibrated_reference_norm_l
 
 
 SITES = ("ARV", "VEE", "BVR")
-DEFAULT_DATE = "20260210"
 DEFAULT_BOUNDS = (-170.0, -135.0, 57.5, 72.0)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--time", required=True, help="Frame time as HHMMSS(.fraction)")
-    parser.add_argument("--date", default=DEFAULT_DATE, help="Image date as YYYYMMDD")
+    parser.add_argument("--date", default=None, help="Image/model date as YYYYMMDD (default: mission date)")
     parser.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default="GNEISS")
     parser.add_argument("--red-wavelength", choices=["6300"], default="6300")
     parser.add_argument(
@@ -101,6 +99,7 @@ def default_output(args):
 
 def main():
     args = parse_args()
+    args.date = mission_date_key(args.date, args.mission)
     lon_min, lon_max, lat_min, lat_max = args.bounds
     if lon_min >= lon_max or lat_min >= lat_max:
         raise ValueError("--bounds must satisfy LON_MIN < LON_MAX and LAT_MIN < LAT_MAX")
@@ -137,7 +136,7 @@ def main():
     coast_lon = np.loadtxt(COAST_LON_PATH)
     coast_lat = np.loadtxt(COAST_LAT_PATH)
     cmap = choose_image_cmap("monochromatic", "red")
-    apex = Apex(date=target_dt)
+    apex = get_mission_apex(args.date)
     fig, axes = plt.subplots(1, 3, figsize=(21, 7), sharex=True, sharey=True)
     image_handle = None
 

@@ -424,7 +424,7 @@ def main():
     traj_configs = trajectory_config_tuples(args.mission, date=args.date)
     traj_lookups_by_alt = {
         alt: {
-            key: build_traj_lookup(str(path), color=args.color)
+            key: build_traj_lookup(str(path), color=args.color, date=args.date)
             for key, _tag, _label, path in traj_configs
         }
         for alt in alts

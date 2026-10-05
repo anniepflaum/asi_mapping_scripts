@@ -10,7 +10,8 @@ from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
 import numpy as np
-from apexpy import Apex
+
+from core.magnetic import get_mission_apex, mission_date_key
 
 from core.paths import (
     GNEISS_LEFT_TRAJECTORY_PATH,
@@ -19,13 +20,13 @@ from core.paths import (
 from core.constants import DEFAULT_GREEN_ALT_KM, DEFAULT_RED_ALT_KM
 from core.missions import (
     giraff_rocket_id_for_trajectory_path,
+    rocket_default_date,
     rocket_launch_datetime,
     rocket_launch_start,
 )
 from core.time_utils import hhmmss_fractional_to_seconds
 
 
-apex = Apex()
 GPS_TIME_RE = re.compile(r"^\d{3}\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$")
 UTC_TIME_COLUMN = "Time (UTC / From GPS Receiver)"
 FLIGHT_TIME_COLUMN = "Flight Time (Official T0)"
@@ -266,8 +267,9 @@ def trajectory_marker_second(filename):
 
 
 @lru_cache(maxsize=16)
-def _load_mapped_traj(filename, color):
+def _load_mapped_traj(filename, color, date):
     utc_times, _flight_times, lats, lons, alts = load_traj_records(filename)
+    apex = get_mission_apex(date)
     lats, lons, _ = apex.map_to_height(
         lats, lons, alts, mapped_apex_height(color)
     )
@@ -277,13 +279,17 @@ def _load_mapped_traj(filename, color):
     return utc_times, lats, lons, alts, idx
 
 
-def load_traj(filename, map_time=None, color="green"):
+def load_traj(filename, map_time=None, color="green", date=None):
     """
     Load rocket trajectory from a GPS export file.
     Map lat/lon to the color-specific altitude and optionally return the nearest map-time point.
+    Use the selected mission date, or infer the configured rocket date when omitted.
     """
+    if date is None:
+        rocket = giraff_rocket_id_for_trajectory_path(filename)
+        date = rocket_default_date(rocket) if rocket else None
     utc_times, lats, lons, alts, idx = _load_mapped_traj(
-        str(filename), str(color).lower()
+        str(filename), str(color).lower(), mission_date_key(date)
     )
     latsm = lats[idx].squeeze()
     lonsm = lons[idx].squeeze()
@@ -309,9 +315,9 @@ def load_traj_times(filename):
     return flight_times
 
 
-def build_traj_lookup(traj_path, color="green"):
+def build_traj_lookup(traj_path, color="green", date=None):
     """Load and cache one trajectory for repeated nearest-time lookup."""
-    lats, lons, _latm, _lonm, _lata, _lona, _lat_map, _lon_map = load_traj(traj_path, color=color)
+    lats, lons, _latm, _lonm, _lata, _lona, _lat_map, _lon_map = load_traj(traj_path, color=color, date=date)
     utc_times, flight_times, raw_lats, raw_lons, raw_alts = load_traj_records(traj_path)
     launch_start = get_launch_start_from_traj_csv(traj_path)
     return {

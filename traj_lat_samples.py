@@ -445,7 +445,7 @@ def main():
 
     traj_data = []
     for key, tag, label, path in traj_configs:
-        lookup = build_traj_lookup(str(path), color=args.color)
+        lookup = build_traj_lookup(str(path), color=args.color, date=args.date)
         lats, lons = resample_traj_by_latitude(lookup, args.samples)
         traj_data.append(
             {

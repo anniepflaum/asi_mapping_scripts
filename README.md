@@ -24,6 +24,13 @@ GIRAFF uses one `main` trajectory. There are no left/right GIRAFF
 trajectories. Selecting `--mission GIRAFF --date 20250209` automatically uses
 rocket `380`; `20250202` uses rocket `381`.
 
+Magnetic-coordinate calculations use the selected mission date: February 10,
+2026 for GNEISS, February 2, 2025 for GIRAFF 381, and February 9, 2025 for
+GIRAFF 380. Scripts with `--date` use that date. `core/magnetic.py` shares Apex
+models by date, and mapped-trajectory caches include the date. This applies to
+trajectory sampling, magnetic plot grids, and EZIE mapping.
+Existing output files are unchanged; regenerate them to apply the model date.
+
 GIRAFF supports green- and red-channel VEE imagery. Non-VEE image sites for
 GIRAFF will stop with an argument error.
 
@@ -272,9 +279,6 @@ Expected shared inputs:
 - `$LAB317_DATA_ROOT/reference/starmaps/{color}/{site}/...`
 - local TIFF archives under `$LAB317_DATA_ROOT/raw/asi/images/...` or a direct `ASI_IMAGE_ROOT` override
 - coastline assets under `coast/`
-
-PFISR retrieval is optional. If PFISR download or the `resolvedvelocities`
-package is unavailable, map generation continues without that overlay.
 
 ## GIRAFF TIFF/Cache Notes
 

@@ -5,6 +5,7 @@ import datetime as dt
 import os
 import re
 import json
+import time
 from glob import glob
 from pathlib import Path
 
@@ -247,6 +248,8 @@ def _cached_tiff_page_metadata(tiff_path, fallback_frame_interval):
         }
 
     start_dt = parse_tiff_start_datetime(tiff_path)
+    print(f"Reading TIFF frame count: {tiff_path.name}...", flush=True)
+    scan_start = time.monotonic()
     with tifffile.TiffFile(tiff_path) as tif:
         n_frames = len(tif.pages)
     end_dt = start_dt + dt.timedelta(
@@ -259,6 +262,11 @@ def _cached_tiff_page_metadata(tiff_path, fallback_frame_interval):
         "n_frames": n_frames,
     }
     _write_tiff_timing_cache()
+    print(
+        f"Cached timing for {tiff_path.name}: {n_frames} frames "
+        f"({time.monotonic() - scan_start:.1f} s).",
+        flush=True,
+    )
     return {
         "path": tiff_path,
         "start_dt": start_dt,

@@ -171,7 +171,7 @@ def write_string_coord(ds, name, dim, values):
 def trajectory_data(times, color, date):
     configs = trajectory_configs("GNEISS", date=date)
     labels = trajectory_display_labels("GNEISS", date=date)
-    lookups = {cfg.key: build_traj_lookup(str(cfg.path), color=color) for cfg in configs}
+    lookups = {cfg.key: build_traj_lookup(str(cfg.path), color=color, date=date) for cfg in configs}
     n_rockets = len(configs)
     n_times = len(times)
     n_points = max(len(lookups[cfg.key]["lats"]) for cfg in configs)
