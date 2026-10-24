@@ -51,3 +51,29 @@ def test_local_map_uses_selected_rocket_date_without_network(monkeypatch):
         ("20260210", "red"),
     ]
     assert not network_calls
+
+
+def test_red_alt_reaches_skymaps_plot_and_feathers(monkeypatch):
+    calls = {}
+    def skymaps(sites, color, mission, altitude):
+        calls["skymap_alt"] = altitude
+        return {}
+    def feathers(color, date, **kwargs):
+        calls["feather_alt"] = kwargs["map_alt_km"]
+        return {}
+    monkeypatch.setattr(mapping, "cached_skymaps", skymaps)
+    monkeypatch.setattr(mapping, "cached_featherplot_context", feathers)
+    monkeypatch.setattr(mapping, "plot_map", lambda *args, **kwargs: calls.update(plot_alt=kwargs["map_alt_km"]))
+    mapping.main(["--mission", "GNEISS", "--time", "102400", "--sites", "--color", "red",
+                  "--red-alt", "250", "--no-shared-norm", "--featherplot"])
+    assert calls == {"skymap_alt": 250.0, "feather_alt": 250.0, "plot_alt": 250.0}
+
+
+def test_invalid_red_alt_rejected():
+    import pytest
+    for options in [["--color", "red", "--red-alt", "0"],
+                    ["--color", "red", "--red-alt", "nan"],
+                    ["--color", "green", "--red-alt", "250"]]:
+        with pytest.raises(SystemExit) as exc:
+            mapping.main(["--time", "102400", *options])
+        assert exc.value.code == 2

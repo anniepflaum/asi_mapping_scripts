@@ -6,6 +6,7 @@ def load_skymaps(selected_sites=None, color="green", mission="GNEISS", map_alt_k
     """
     Load latitude/longitude mapping arrays for each site using the skymap module.
     """
+    altitude_override = map_alt_km is not None
     skymaps = {}
     if selected_sites is None:
         selected_sites = {"ARV", "PKR", "VEE", "BVR"}
@@ -39,7 +40,7 @@ def load_skymaps(selected_sites=None, color="green", mission="GNEISS", map_alt_k
     map_alt_km = float(map_alt_km)
     for sm in skymaps.values():
         sm["map_alt_km"] = map_alt_km
-        if "lat" in sm and "lon" in sm:
+        if "lat" in sm and "lon" in sm and not altitude_override:
             continue
         lat, lon = skymap.azel2geo(sm["site_lat"], sm["site_lon"], sm["azmt"], sm["elev"], alt=map_alt_km)
         sm["lat"] = lat

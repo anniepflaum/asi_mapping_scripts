@@ -58,13 +58,14 @@ def empty_geodetic_traj_context():
     return {"lat": None, "lon": None, "lat_minute": None, "lon_minute": None, "lat_map": None, "lon_map": None}
 
 
-def load_single_trajectory_context(traj_path, map_time, color, receivers, plot_ipps, rocket_label, date=None):
+def load_single_trajectory_context(traj_path, map_time, color, receivers, plot_ipps, rocket_label, date=None, map_alt_km=None):
     try:
         lat, lon, latm, lonm, _lata, _lona, lat_map, lon_map = load_traj(
             str(traj_path),
             map_time=map_time,
             color=color,
             date=date,
+            map_alt_km=map_alt_km,
         )
     except FileNotFoundError:
         print_warning(f"{rocket_label} trajectory file not found: {traj_path}. Trajectory overlay will be skipped.")
@@ -74,7 +75,7 @@ def load_single_trajectory_context(traj_path, map_time, color, receivers, plot_i
     if plot_ipps:
         try:
             rocket_geo = lookup_traj_geodetic_position(build_traj_lookup(str(traj_path), color=color, date=date), map_time)
-            ipps = compute_receiver_ipps(receivers, rocket_geo, mapped_apex_height(color))
+            ipps = compute_receiver_ipps(receivers, rocket_geo, mapped_apex_height(color) if map_alt_km is None else map_alt_km)
         except FileNotFoundError:
             print_warning(f"{rocket_label} trajectory file not found while computing IPPs: {traj_path}. IPP overlay will be skipped.")
         except ValueError as exc:
@@ -217,7 +218,7 @@ def build_time_label(args):
     return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}\n" + " | ".join(tplus_parts)
 
 
-def load_trajectory_context(map_time, color, receivers, plot_ipps, mission="GNEISS", date=None):
+def load_trajectory_context(map_time, color, receivers, plot_ipps, mission="GNEISS", date=None, map_alt_km=None):
     date = mission_date_key(date, mission)
     return {
         cfg.key: load_single_trajectory_context(
@@ -228,6 +229,7 @@ def load_trajectory_context(map_time, color, receivers, plot_ipps, mission="GNEI
             plot_ipps,
             cfg.label,
             date=date,
+            map_alt_km=map_alt_km,
         )
         for cfg in trajectory_configs(mission, date=date)
     }
@@ -644,7 +646,8 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_map(skymaps, imgs, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None, plot_ezie=False, render_mode="auto", colorbar_label=None, channel_title=None, featherplot_ctx=None, featherplot_highlight_count=1):
+def plot_map(skymaps, imgs, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None, plot_ezie=False, render_mode="auto", colorbar_label=None, channel_title=None, featherplot_ctx=None, featherplot_highlight_count=1, map_alt_km=None):
+    map_alt_km = mapped_apex_height(color) if map_alt_km is None else map_alt_km
     map_date = mission_date_key(map_date, mission)
     mission_apex = get_mission_apex(map_date)
     if apex is None:
@@ -653,7 +656,7 @@ def plot_map(skymaps, imgs, output_path=None, map_time=None, map_date=None, boun
         apex.set_epoch(mission_apex.year)
     receivers = filter_receivers_for_mission(load_receivers(warn=print_warning), mission) if (plot_receivers or plot_ipps) else []
     if pretty:
-        fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex, mapped_apex_height(color))
+        fig, gs, ax, ax1, axt, axt1 = setup_pretty_axes(imgs, bounds, apex, map_alt_km)
     else:
         fig, gs, ax, ax1, axt, axt1 = setup_fast_axes(imgs, bounds)
     side_images, main_images, site_limits, site_norms, shared_vmin, shared_vmax, shared_image_norm = prepare_image_layers(
@@ -686,7 +689,7 @@ def plot_map(skymaps, imgs, output_path=None, map_time=None, map_date=None, boun
         axt1,
         render_mode=resolved_render_mode,
     )
-    traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps, mission=mission, date=map_date)
+    traj_ctx = load_trajectory_context(map_time, color, receivers, plot_ipps, mission=mission, date=map_date, map_alt_km=map_alt_km)
     draw_trajectory_and_ipps(ax, traj_ctx, axt, mission=mission, date=map_date)
     if plot_geodetic_traj:
         draw_geodetic_trajectory(ax, load_geodetic_trajectory_context(map_time, mission=mission, date=map_date), axt, mission=mission)
@@ -717,7 +720,7 @@ def plot_map(skymaps, imgs, output_path=None, map_time=None, map_date=None, boun
         shared_norm=shared_norm,
         mission=mission,
         legend_loc="upper left" if plot_ezie else "upper right",
-        map_alt_km=mapped_apex_height(color),
+        map_alt_km=map_alt_km,
         colorbar_label=colorbar_label,
         channel_title=channel_title,
     )

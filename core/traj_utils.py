@@ -267,11 +267,11 @@ def trajectory_marker_second(filename):
 
 
 @lru_cache(maxsize=16)
-def _load_mapped_traj(filename, color, date):
+def _load_mapped_traj(filename, color, date, map_alt_km=None):
     utc_times, _flight_times, lats, lons, alts = load_traj_records(filename)
     apex = get_mission_apex(date)
     lats, lons, _ = apex.map_to_height(
-        lats, lons, alts, mapped_apex_height(color)
+        lats, lons, alts, mapped_apex_height(color) if map_alt_km is None else map_alt_km
     )
     idx = fixed_utc_minute_marker_indices(
         utc_times, second_of_minute=trajectory_marker_second(filename)
@@ -279,7 +279,7 @@ def _load_mapped_traj(filename, color, date):
     return utc_times, lats, lons, alts, idx
 
 
-def load_traj(filename, map_time=None, color="green", date=None):
+def load_traj(filename, map_time=None, color="green", date=None, map_alt_km=None):
     """
     Load rocket trajectory from a GPS export file.
     Map lat/lon to the color-specific altitude and optionally return the nearest map-time point.
@@ -289,7 +289,7 @@ def load_traj(filename, map_time=None, color="green", date=None):
         rocket = giraff_rocket_id_for_trajectory_path(filename)
         date = rocket_default_date(rocket) if rocket else None
     utc_times, lats, lons, alts, idx = _load_mapped_traj(
-        str(filename), str(color).lower(), mission_date_key(date)
+        str(filename), str(color).lower(), mission_date_key(date), map_alt_km
     )
     latsm = lats[idx].squeeze()
     lonsm = lons[idx].squeeze()

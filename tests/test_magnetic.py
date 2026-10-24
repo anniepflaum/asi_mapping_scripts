@@ -158,3 +158,11 @@ def test_ezie_tracks_use_requested_date(tmp_path):
     assert len(tracks) == 1
     np.testing.assert_allclose(tracks[0]["lat"], expected[0], rtol=0, atol=1e-6)
     np.testing.assert_allclose(tracks[0]["lon"], expected[1], rtol=0, atol=1e-6)
+
+
+def test_custom_red_height_changes_mapping_and_separates_cache(tiny_trajectory):
+    default = traj_utils.load_traj(tiny_trajectory, color="red", date="20260210")
+    custom = traj_utils.load_traj(tiny_trajectory, color="red", date="20260210", map_alt_km=250.0)
+    assert np.max(np.abs(custom[0] - default[0])) > 1e-4
+    repeat = traj_utils.load_traj(tiny_trajectory, color="red", date="20260210")
+    np.testing.assert_array_equal(repeat[0], default[0])

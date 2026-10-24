@@ -115,7 +115,7 @@ def map_featherplot_geometry(apex, trajectory, vectors, target_height_km):
 def cached_featherplot_context(color="green", date="20260210", step_seconds=1.0):
     """Load GNEISS vectors and place geographic EN arrows on mapped trajectories."""
     apex = get_mission_apex(date)
-    target_height_km = mapped_apex_height(color)
+    target_height_km = mapped_apex_height(color) if map_alt_km is None else map_alt_km
     context = {}
     for rocket in ("397", "398"):
         trajectory = load_trajectory(TRAJECTORY_PATHS[rocket], rocket)
@@ -160,10 +160,10 @@ def wavelength_title(color, red_wavelength="6300"):
     return str(color)
 
 
-def cached_skymaps(selected_sites, color, mission):
-    key = (tuple(sorted(selected_sites)), str(color).lower(), str(mission).upper())
+def cached_skymaps(selected_sites, color, mission, map_alt_km=None):
+    key = (tuple(sorted(selected_sites)), str(color).lower(), str(mission).upper(), map_alt_km)
     if key not in _SKYMAP_CACHE:
-        skymaps = load_skymaps(selected_sites, color=color, mission=mission)
+        skymaps = load_skymaps(selected_sites, color=color, mission=mission, map_alt_km=map_alt_km)
         build_overlap_masks(skymaps)
         _SKYMAP_CACHE[key] = skymaps
     return _SKYMAP_CACHE[key]
@@ -191,6 +191,7 @@ def cached_reference_norm_limits(
         str(mission).upper(),
         str(red_wavelength),
         float(upper_percentile),
+        tuple((site, skymaps[site].get("map_alt_km")) for site in sorted(skymaps)),
     )
     if key not in _REFERENCE_NORM_CACHE:
         _REFERENCE_NORM_CACHE[key] = calibrated_reference_norm_limits(
@@ -319,7 +320,13 @@ def main(argv=None):
         help="ASI rendering method; auto uses pcolor for green and regrid for red",
     )
     ap.add_argument("--featherplot-highlight-count", type=int, default=1, help="Number of feathers nearest map time to highlight per rocket")
+    ap.add_argument("--red-alt", type=float, default=None, metavar="KM", help="Mapping altitude for red 6300 images in km (default: 180)")
     args = ap.parse_args(argv)
+    if args.red_alt is not None:
+        if not np.isfinite(args.red_alt) or args.red_alt <= 0:
+            ap.error("--red-alt must be a finite positive altitude in km")
+        if args.color != "red" or args.red_wavelength != "6300":
+            ap.error("--red-alt requires --color red --red-wavelength 6300")
     if args.featherplot_highlight_count < 1:
         ap.error("--featherplot-highlight-count must be >= 1")
     if args.bounds is not None:
@@ -363,7 +370,7 @@ def main(argv=None):
         "loading starmaps and building overlap masks...",
         flush=True,
     )
-    skymaps = cached_skymaps(selected_sites, args.color, args.mission)
+    skymaps = cached_skymaps(selected_sites, args.color, args.mission, args.red_alt)
 
     imgs = dict()  # Stores normalized display images for each site
     imgs_raw = dict()  # Stores raw image values for brightness sampling
@@ -446,6 +453,7 @@ def main(argv=None):
         map_time=args.time,
         map_date=date,
         bounds=args.bounds,
+        map_alt_km=args.red_alt,
         color=args.color,
         imgs_raw=imgs_raw,
         norm_limits=fixed_norm_limits,
@@ -459,7 +467,7 @@ def main(argv=None):
         plot_geodetic_traj=args.plot_geodetic_traj,
         featherplot_highlight_count=args.featherplot_highlight_count,
         featherplot_ctx=(
-            cached_featherplot_context(args.color, date)
+            cached_featherplot_context(args.color, date, map_alt_km=args.red_alt)
             if args.featherplot else None
         ),
         plot_ezie=args.plot_ezie,
