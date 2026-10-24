@@ -119,6 +119,36 @@ combined range is used.
 
 ## Main Scripts
 
+### `e_b_featherplot.py`
+
+Plots the geographic GPS trajectories of GNEISS rockets 397 and 398 with
+east/north ExB velocity arrows. By default, arrows use shared 10-second TG
+marks within 100–500 seconds after each rocket's nominal launch: 397 uses
+10:20:40–10:27:20 UTC (TG+100–500 s), and 398 uses 10:21:10–10:27:50 UTC
+(TG+130–530 s). TG is 10:19:00 UTC on February 10, 2026. Dots and arrows match
+their trajectory's color: blue for 397 and orange for 398.
+
+```bash
+python3 e_b_featherplot.py --step 10
+```
+
+Inputs default to `exb_july30_397.csv` and `exb_oct6_398.csv` under
+`$LAB317_DATA_ROOT/raw/rocket/gneiss-stackplot`, plus the shared GNEISS GPS
+exports. GPS receiver UTC is aligned to each ExB file's header T0; the GPS
+Official T0 column is a different reference and is not used for this alignment.
+The full flight paths use direct GPS latitude/longitude at rocket altitude.
+Velocities and positions are linearly interpolated at each vector time,
+retaining missing-data gaps and avoiding extrapolation; no averaging is applied.
+
+The default figure and sampled-vector CSV are saved under
+`$LAB317_OUTPUT_ROOT/asi-mapping/e_b_featherplot_20260210.{png,csv}`.
+Use `--start` and `--end` for seconds after each nominal launch and `--step`
+for the interval on the shared TG clock; `--vector-scale-seconds`
+sets arrow length (default 80: 1000 m/s spans 80 km on the map). The map bounds
+include all arrow tips with padding, and no time colorbar is shown. Use `--show`
+to display the figure, `--output` to choose its path, or `--exb-397`,
+`--exb-398`, `--trajectory-397`, and `--trajectory-398` to override inputs.
+
 ### `map_asi_archive.py`
 
 Creates one mapped ASI image.
@@ -153,6 +183,12 @@ Useful options:
 - `--plot-receivers`
 - `--plot-ipps`
 - `--plot-geodetic-traj`
+- `--featherplot`: overlay GNEISS trajectories and ExB vectors magnetically
+  mapped along Apex field lines to the channel altitude. Both arrow tails and
+  arrow endpoints use the same mapping as the standard trajectory overlay. The
+  vector nearest the requested map time is blue for 397 or orange for 398;
+  all other vectors use pale blue or pale orange. The overlay uses 10-second
+  samples from 10:20:40–10:27:20 UTC for 397 and 10:21:10–10:27:50 UTC for 398.
 
 ### `map_asi_archive_series.py`
 

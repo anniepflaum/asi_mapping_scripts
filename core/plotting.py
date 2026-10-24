@@ -470,7 +470,7 @@ def draw_trajectory_and_ipps(ax, traj_ctx, axtrans, mission="GNEISS", date=None)
         if traj["lat_minute"] is not None and traj["lon_minute"] is not None:
             ax.scatter(traj["lon_minute"], traj["lat_minute"], color=traj_color, s=15, zorder=7, transform=axtrans)
         if traj["lat_map"] is not None and traj["lon_map"] is not None:
-            ax.scatter(traj["lon_map"], traj["lat_map"], color=position_color, s=50, marker="o", zorder=8, label=f"{traj_label} at map time", transform=axtrans)
+            ax.scatter(traj["lon_map"], traj["lat_map"], color=position_color, s=50, marker="o", zorder=11, label=f"{traj_label} at map time", transform=axtrans)
         ipps = traj["ipps"]
         if not ipps:
             continue
@@ -489,7 +489,65 @@ def draw_geodetic_trajectory(ax, geodetic_traj_ctx, axtrans, mission="GNEISS"):
         if traj["lat_minute"] is not None and traj["lon_minute"] is not None:
             ax.scatter(traj["lon_minute"], traj["lat_minute"], color=color, s=15, transform=axtrans, zorder=6)
         if traj["lat_map"] is not None and traj["lon_map"] is not None:
-            ax.scatter(traj["lon_map"], traj["lat_map"], color=color, s=40, marker="o", transform=axtrans, zorder=7)
+            ax.scatter(traj["lon_map"], traj["lat_map"], color=color, s=40, marker="o", transform=axtrans, zorder=11)
+
+
+def nearest_feather_vector_index(vectors, map_time):
+    """Return the vector index nearest a map's UTC time-of-day."""
+    return int(nearest_feather_vector_indices(vectors, map_time, 1)[0])
+
+
+def nearest_feather_vector_indices(vectors, map_time, count):
+    """Select up to count finite vectors nearest map time, preserving tie order."""
+    map_seconds = hhmmss_fractional_to_seconds(map_time)
+    utc_seconds = np.asarray(vectors["utc_seconds"], dtype=float)
+    finite = np.flatnonzero(np.isfinite(utc_seconds))
+    if finite.size == 0:
+        raise ValueError("Featherplot has no finite UTC vector times")
+    order = np.argsort(np.abs(utc_seconds[finite] - map_seconds), kind="stable")
+    return finite[order[:count]]
+
+
+def draw_featherplot(ax, featherplot_ctx, map_time, axtrans, highlight_count=1):
+    """Draw ExB vectors faintly and emphasize those nearest map time."""
+    if not featherplot_ctx:
+        return
+    colors = {
+        "397": ("tab:blue", "#a6cee3"),
+        "398": ("tab:orange", "#fdd0a2"),
+    }
+    for rocket, context in featherplot_ctx.items():
+        trajectory = context["trajectory"]
+        vectors = context["vectors"]
+        strong, pale = colors.get(rocket, ("tab:gray", "lightgray"))
+        ax.plot(
+            trajectory["longitude_deg"],
+            trajectory["latitude_deg"],
+            color=strong,
+            linewidth=1.2,
+            alpha=0.9,
+            label=f"{rocket} mapped trajectory",
+            transform=axtrans,
+            zorder=8,
+        )
+        dlon, dlat = vectors["dlon"], vectors["dlat"]
+        nearest = nearest_feather_vector_indices(vectors, map_time, highlight_count)
+        faint = np.ones(len(vectors["time_s"]), dtype=bool)
+        faint[nearest] = False
+        if np.any(faint):
+            ax.quiver(
+                vectors["longitude_deg"][faint], vectors["latitude_deg"][faint],
+                dlon[faint], dlat[faint], angles="xy", scale_units="xy", scale=1,
+                pivot="tail", color=pale, width=0.0022, headwidth=3.5,
+                headlength=4.5, alpha=0.75, transform=axtrans, zorder=8.5,
+            )
+        ax.quiver(
+            vectors["longitude_deg"][nearest], vectors["latitude_deg"][nearest],
+            dlon[nearest], dlat[nearest], angles="xy", scale_units="xy", scale=1,
+            pivot="tail", color=strong, width=0.0032, headwidth=4.0,
+            headlength=5.0, label=f"{rocket} ExB nearest map time",
+            transform=axtrans, zorder=10,
+        )
 
 
 def draw_ezie_trajectories(ax, map_time, axtrans, date=None):
@@ -586,7 +644,7 @@ def finalize_plot(ax, fig, gs, im_handle, color, label_str, output_path, default
     print(f"Saved mapped image to {output_path}")
 
 
-def plot_map(skymaps, imgs, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None, plot_ezie=False, render_mode="auto", colorbar_label=None, channel_title=None):
+def plot_map(skymaps, imgs, output_path=None, map_time=None, map_date=None, bounds=None, color="green", imgs_raw=None, norm_limits=None, colorbar_scale="linear", colorbar_color="viridis", apex=None, plot_receivers=False, plot_ipps=False, pretty=False, plot_geodetic_traj=False, shared_norm=True, mission="GNEISS", upper_percentile=NORMALIZATION_UPPER_PERCENTILE, site_markers=None, plot_ezie=False, render_mode="auto", colorbar_label=None, channel_title=None, featherplot_ctx=None, featherplot_highlight_count=1):
     map_date = mission_date_key(map_date, mission)
     mission_apex = get_mission_apex(map_date)
     if apex is None:
@@ -632,6 +690,8 @@ def plot_map(skymaps, imgs, output_path=None, map_time=None, map_date=None, boun
     draw_trajectory_and_ipps(ax, traj_ctx, axt, mission=mission, date=map_date)
     if plot_geodetic_traj:
         draw_geodetic_trajectory(ax, load_geodetic_trajectory_context(map_time, mission=mission, date=map_date), axt, mission=mission)
+    if featherplot_ctx is not None:
+        draw_featherplot(ax, featherplot_ctx, map_time, axt, highlight_count=featherplot_highlight_count)
     if plot_ezie:
         draw_ezie_trajectories(ax, map_time, axt, date=map_date)
     if plot_receivers:

@@ -26,6 +26,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 
 import argparse
 import datetime as dt
+import functools
 import time
 import matplotlib
 import numpy as np
@@ -52,6 +53,17 @@ from core.time_utils import (
     sanitize_time_for_filename,
 )
 from core.tiff_utils import get_site_tiff_candidates, load_best_frame_from_tiffs
+from core.traj_utils import mapped_apex_height
+from e_b_featherplot import (
+    EXB_PATHS,
+    TG_SECONDS_OF_DAY,
+    TRAJECTORY_PATHS,
+    load_exb,
+    load_trajectory,
+    sample_vectors,
+    velocity_to_degree_offsets,
+    vector_time_window,
+)
 
 # Suppress runtime and user warnings
 import warnings
@@ -60,6 +72,68 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 _SKYMAP_CACHE = {}
 _REFERENCE_NORM_CACHE = {}
+
+
+def map_featherplot_geometry(apex, trajectory, vectors, target_height_km):
+    """Apex-map the trajectory and tails, then draw geographic EN arrows."""
+    traj_lat, traj_lon, _ = apex.map_to_height(
+        trajectory["latitude_deg"],
+        trajectory["longitude_deg"],
+        trajectory["altitude_km"],
+        target_height_km,
+    )
+    tail_lat, tail_lon, _ = apex.map_to_height(
+        vectors["latitude_deg"],
+        vectors["longitude_deg"],
+        vectors["altitude_km"],
+        target_height_km,
+    )
+    dlon, dlat = velocity_to_degree_offsets(
+        tail_lat,
+        vectors["east_m_s"],
+        vectors["north_m_s"],
+        scale_seconds=160.0,
+        altitude_km=target_height_km,
+    )
+    return {
+        "trajectory": {
+            **trajectory,
+            "latitude_deg": np.asarray(traj_lat, dtype=float),
+            "longitude_deg": np.asarray(traj_lon, dtype=float),
+        },
+        "vectors": {
+            **vectors,
+            "latitude_deg": np.asarray(tail_lat, dtype=float),
+            "longitude_deg": np.asarray(tail_lon, dtype=float),
+            "dlat": np.asarray(dlat, dtype=float),
+            "dlon": np.asarray(dlon, dtype=float),
+        },
+    }
+
+
+@functools.lru_cache(maxsize=4)
+def cached_featherplot_context(color="green", date="20260210", step_seconds=1.0):
+    """Load GNEISS vectors and place geographic EN arrows on mapped trajectories."""
+    apex = get_mission_apex(date)
+    target_height_km = mapped_apex_height(color)
+    context = {}
+    for rocket in ("397", "398"):
+        trajectory = load_trajectory(TRAJECTORY_PATHS[rocket], rocket)
+        flow = load_exb(EXB_PATHS[rocket], rocket)
+        start_s, end_s = vector_time_window(rocket, 100.0, 500.0)
+        targets = np.arange(
+            np.ceil(start_s / step_seconds),
+            np.floor(end_s / step_seconds) + 1,
+        ) * step_seconds
+        vectors = sample_vectors(trajectory, flow, targets)
+        vectors = {
+            **vectors,
+            "utc_seconds": vectors["time_s"] + TG_SECONDS_OF_DAY,
+        }
+        context[rocket] = map_featherplot_geometry(
+            apex, trajectory, vectors, target_height_km
+        )
+    return context
 
 
 def calibrate_image_for_map(site, im_raw, skymaps, color):
@@ -214,11 +288,10 @@ def main(argv=None):
     ap.add_argument("--red-wavelength", choices=["6300", "8446"], default="6300", help="Red-channel wavelength directory to use; default preserves the 6300 workflow")
     ap.add_argument(
         "--bounds",
-        nargs=4,
-        type=float,
-        metavar=("LON_MIN", "LON_MAX", "LAT_MIN", "LAT_MAX"),
+        nargs="+",
+        metavar="BOUND",
         default=None,
-        help="Optional map bounds override: lon_min lon_max lat_min lat_max",
+        help="Optional map bounds: lon_min lon_max lat_min lat_max, or 'traj' for lon [-150, -143], lat [65, 69.5]",
     )
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling for ASI intensity")
     ap.add_argument("--vmax", type=float, default=NORMALIZATION_UPPER_PERCENTILE, help="Upper percentile used as vmax for ASI normalization")
@@ -232,6 +305,12 @@ def main(argv=None):
     ap.add_argument("--plot-receivers", action="store_true", help="Plot receiver locations from receivers.csv on the map")
     ap.add_argument("--plot-ipps", action="store_true", help="Plot receiver ionospheric pierce points on the map")
     ap.add_argument("--plot-geodetic-traj", dest="plot_geodetic_traj", action="store_true", help="Overlay the rocket trajectories in geodetic coordinates as blue traces")
+    ap.add_argument(
+        "--featherplot",
+        action="store_true",
+        default=False,
+        help="Overlay GNEISS geographic trajectories and ExB vectors; highlight the vector nearest map time",
+    )
     ap.add_argument("--plot-ezie", action="store_true", help="Overlay EZIE MEM trajectories mapped along magnetic field lines to 110 km")
     ap.add_argument(
         "--render-mode",
@@ -239,7 +318,20 @@ def main(argv=None):
         default="pcolormesh",
         help="ASI rendering method; auto uses pcolor for green and regrid for red",
     )
+    ap.add_argument("--featherplot-highlight-count", type=int, default=1, help="Number of feathers nearest map time to highlight per rocket")
     args = ap.parse_args(argv)
+    if args.featherplot_highlight_count < 1:
+        ap.error("--featherplot-highlight-count must be >= 1")
+    if args.bounds is not None:
+        if args.bounds == ["traj"]:
+            args.bounds = [-150.0, -143.0, 64.0, 69.5]
+        else:
+            if len(args.bounds) != 4:
+                ap.error("--bounds requires 'traj' or four numbers: LON_MIN LON_MAX LAT_MIN LAT_MAX")
+            try:
+                args.bounds = [float(value) for value in args.bounds]
+            except ValueError:
+                ap.error("--bounds requires 'traj' or four numbers: LON_MIN LON_MAX LAT_MIN LAT_MAX")
     shared_norm = not args.no_shared_norm
     try:
         args.mission, date = resolve_mission_and_date(args.mission, args.rocket)
@@ -255,6 +347,8 @@ def main(argv=None):
         ap.error(f"--time {exc}")
     if args.color == "red" and args.red_wavelength != "6300":
         ap.error("red calibration factors are currently configured for 6300 only; use --red-wavelength 6300")
+    if args.featherplot and args.mission != "GNEISS":
+        ap.error("--featherplot is currently available only for --mission GNEISS")
     if args.bounds is not None:
         lon_min, lon_max, lat_min, lat_max = args.bounds
         if lon_min >= lon_max or lat_min >= lat_max:
@@ -339,8 +433,9 @@ def main(argv=None):
     # --- Compose output path for mapped image, include plotting mode ---
     sites_str = '_'.join(sorted(selected_sites))
     color = args.color
+    feather_suffix = "_feather" if args.featherplot else ""
     render_suffix = "" if args.render_mode == "auto" else f"_{args.render_mode}"
-    output_path = mission_output_dir(args.mission, color=args.color, date=date) / f"calibrated_{color}_{sites_str}_{date}_{time_token}.png"
+    output_path = mission_output_dir(args.mission, color=args.color, date=date) / f"calibrated_{color}{feather_suffix}_{sites_str}_{date}_{time_token}.png"
 
     # --- Run downstream plotting even if no TIFFs were found ---
     print(f"Rendering map to {output_path}...", flush=True)
@@ -362,6 +457,11 @@ def main(argv=None):
         plot_ipps=args.plot_ipps,
         pretty=args.pretty,
         plot_geodetic_traj=args.plot_geodetic_traj,
+        featherplot_highlight_count=args.featherplot_highlight_count,
+        featherplot_ctx=(
+            cached_featherplot_context(args.color, date)
+            if args.featherplot else None
+        ),
         plot_ezie=args.plot_ezie,
         mission=args.mission,
         upper_percentile=args.vmax,

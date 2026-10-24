@@ -15,6 +15,7 @@ Example:
 import argparse
 import datetime as dt
 import io
+import math
 import os
 import shutil
 import sys
@@ -71,10 +72,11 @@ def series_output_dir(args):
 
 def frame_output_path(args, time_arg):
     sites_str = "_".join(effective_sites(args))
+    feather_suffix = "_feather" if args.featherplot else ""
     time_token = sanitize_time_for_filename(time_arg)
     render_suffix = "" if args.render_mode == "auto" else f"_{args.render_mode}"
     filename = (
-        f"calibrated_{args.color}_{sites_str}_{args.date}_{time_token}"
+        f"calibrated_{args.color}{feather_suffix}_{sites_str}_{args.date}_{time_token}"
         f"{render_suffix}.png"
     )
     return mission_output_dir(args.mission, color=args.color, date=args.date) / filename
@@ -124,6 +126,8 @@ def build_map_args(args, time_arg):
         map_args.append("--plot-ipps")
     if args.plot_geodetic_traj:
         map_args.append("--plot-geodetic-traj")
+    if args.featherplot:
+        map_args.extend(["--featherplot", "--featherplot-highlight-count", str(max(1, math.ceil(args.step)))])
     if args.plot_ezie:
         map_args.append("--plot-ezie")
     return map_args
@@ -141,11 +145,10 @@ def main():
     ap.add_argument("--red-wavelength", choices=["6300", "8446"], default="6300", help="Red-channel wavelength directory to pass through to map_asi_archive.py")
     ap.add_argument(
         "--bounds",
-        nargs=4,
-        type=float,
-        metavar=("LON_MIN", "LON_MAX", "LAT_MIN", "LAT_MAX"),
+        nargs="+",
+        metavar="BOUND",
         default=None,
-        help="Optional map bounds override",
+        help="Optional map bounds: lon_min lon_max lat_min lat_max, or 'traj' to use the map_asi_archive.py preset",
     )
     ap.add_argument("--colorbar-scale", choices=["linear", "log"], default="log", help="Colorbar scaling")
     ap.add_argument("--vmax", type=float, default=NORMALIZATION_UPPER_PERCENTILE, help="Upper percentile used as vmax for downstream ASI normalization")
@@ -160,6 +163,7 @@ def main():
     ap.add_argument("--plot-receivers", action="store_true", help="Pass --plot-receivers through to map_asi_archive.py")
     ap.add_argument("--plot-ipps", action="store_true", help="Pass --plot-ipps through to map_asi_archive.py")
     ap.add_argument("--plot-geodetic-traj", action="store_true", help="Pass --plot-geodetic-traj through to map_asi_archive.py")
+    ap.add_argument("--featherplot", action="store_true", help="Overlay feathers and highlight step nearest vectors per rocket (fractional steps round up)")
     ap.add_argument("--plot-ezie", action="store_true", help="Pass --plot-ezie through to map_asi_archive.py")
     ap.add_argument(
         "--render-mode",
@@ -200,7 +204,13 @@ def main():
         ap.error(str(exc))
     if args.step <= 0:
         ap.error("--step must be > 0")
-    if args.bounds is not None:
+    if args.bounds is not None and args.bounds != ["traj"]:
+        if len(args.bounds) != 4:
+            ap.error("--bounds requires 'traj' or four numbers: LON_MIN LON_MAX LAT_MIN LAT_MAX")
+        try:
+            args.bounds = [float(value) for value in args.bounds]
+        except ValueError:
+            ap.error("--bounds requires 'traj' or four numbers: LON_MIN LON_MAX LAT_MIN LAT_MAX")
         lon_min, lon_max, lat_min, lat_max = args.bounds
         if lon_min >= lon_max or lat_min >= lat_max:
             ap.error("--bounds must satisfy LON_MIN < LON_MAX and LAT_MIN < LAT_MAX")
