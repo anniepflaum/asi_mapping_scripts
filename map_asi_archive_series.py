@@ -42,6 +42,8 @@ def format_step_token(step_seconds):
 
 
 def wavelength_token(color, red_wavelength="6300"):
+    if str(color).lower() == "blue":
+        return "427p8nm"
     if str(color).lower() == "green":
         return "557p7nm"
     if str(color).lower() == "red":
@@ -141,7 +143,7 @@ def main():
     ap.add_argument("--step", type=float, default=10.0, help="Cadence in seconds")
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to pass to map_asi_archive.py")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use")
-    ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
+    ap.add_argument("--color", choices=["green", "red", "blue"], default="green", help="ASI color channel; blue is 4278 Angstrom (GNEISS ARV/BVR/VEE)")
     ap.add_argument("--red-wavelength", choices=["6300", "8446"], default="6300", help="Red-channel wavelength directory to pass through to map_asi_archive.py")
     ap.add_argument(
         "--bounds",
@@ -181,6 +183,10 @@ def main():
         args.mission, args.date = resolve_mission_and_date(args.mission, args.rocket)
     except ValueError as exc:
         ap.error(str(exc))
+    if args.color == "blue":
+        sites = args.sites if args.sites is not None else default_sites(args.mission)
+        if args.mission != "GNEISS" or not set(map(str.upper, sites)).issubset({"ARV", "BVR", "VEE"}):
+            ap.error("--color blue currently supports only --mission GNEISS with sites ARV, BVR, VEE")
     if not (NORMALIZATION_LOWER_PERCENTILE < args.vmax <= 100):
         ap.error(f"--vmax must be > {NORMALIZATION_LOWER_PERCENTILE:g} and <= 100")
     default_start, default_end = default_time_range(

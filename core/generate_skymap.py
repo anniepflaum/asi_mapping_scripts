@@ -109,18 +109,21 @@ def load_VEE(color="green", mission="GNEISS"):
             mask = fd['Mask'][()].copy().astype(bool)
         return site_lat, site_lon, azmap, elmap, mask, latmap, lonmap
 
-    if str(color).lower() == "red":
-        az_path = starmap_path(color, "6300", "VEE", "VEE_GASI_630_20260210_080000_asistarcalibration_full_Az.sav")
-        el_path = starmap_path(color, "6300", "VEE", "VEE_GASI_630_20260210_080000_asistarcalibration_full_El.sav")
+    if str(color).lower() == "blue":
+        az_path = starmap_path(color, "VEE", "VEE_4278_20260210_050100_az.sav")
+        el_path = starmap_path(color, "VEE", "VEE_4278_20260210_050100_el.sav")
+    elif str(color).lower() == "red":
+        az_path = starmap_path(color, "6300", "VEE", "VEE_6300_20260210_050100_az.sav")
+        el_path = starmap_path(color, "6300", "VEE", "VEE_6300_20260210_050100_el.sav")
     else:
-        az_path = starmap_path(color, "VEE", "GNEISS", "VEE_GASI_20260210_050100_rot5_full_Az.sav")
-        el_path = starmap_path(color, "VEE", "GNEISS", "VEE_GASI_20260210_050100_rot5_full_El.sav")
+        az_path = starmap_path(color, "VEE", "GNEISS", "VEE_5577_20260210_050145_az.sav")
+        el_path = starmap_path(color, "VEE", "GNEISS", "VEE_5577_20260210_050145_el.sav")
     azdat = readsav(az_path, python_dict=True)
     eldat = readsav(el_path, python_dict=True)
     azmap = azdat[list(azdat.keys())[0]].copy()
     elmap = eldat[list(eldat.keys())[0]].copy()
 
-    mask = elmap<22.
+    mask = elmap < 22.0
 
     return site_lat, site_lon, azmap, elmap, mask
 
@@ -129,6 +132,11 @@ def load_VEE(color="green", mission="GNEISS"):
 # Beaver
 def load_BVR(color="green"):
     site_lon, site_lat = [-147.4,    66.36]
+
+    if str(color).lower() == "blue":
+        azmap = fits.getdata(starmap_path(color, "BVR", "ARI_20260209_4278_Az.FIT")).copy()
+        elmap = fits.getdata(starmap_path(color, "BVR", "ARI_20260209_4278_El.FIT")).copy()
+        return site_lat, site_lon, azmap, elmap, elmap < 22.0
 
     if str(color).lower() == "red":
         az_path = starmap_path(color, "6300", "BVR", "BVR_GASI_630_20260210_051800_asistarcalibration_full_Az.sav")
@@ -150,7 +158,10 @@ def load_BVR(color="green"):
 def load_ARV(color="green"):
     site_lon, site_lat = [-145.533,  68.127]
 
-    if color == "red":
+    if str(color).lower() == "blue":
+        azmap = fits.getdata(starmap_path(color, "ARV", "ZOR_ARV_20260210_4278_Az.FIT")).copy()
+        elmap = fits.getdata(starmap_path(color, "ARV", "ZOR_ARV_20260210_4278_El.FIT")).copy()
+    elif color == "red":
         azmap = fits.getdata(starmap_path(color, "6300", "ARV", "ARV_GASI_630_20260209_Az.FIT")).copy()
         elmap = fits.getdata(starmap_path(color, "6300", "ARV", "ARV_GASI_630_20260209_El.FIT")).copy()
     else:

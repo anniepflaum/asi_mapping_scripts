@@ -18,13 +18,20 @@ RED_RAYLEIGH_SECONDS_PER_COUNT = {
     "VEE": 113.0,
     "BVR": 128.0,
 }
+BLUE_RAYLEIGH_SECONDS_PER_COUNT = {
+    "ARV": 100.0,
+    "VEE": 40.0,
+    "BVR": 10.0,
+}
 RAYLEIGH_SECONDS_PER_COUNT_BY_COLOR = {
     "green": GREEN_RAYLEIGH_SECONDS_PER_COUNT,
     "red": RED_RAYLEIGH_SECONDS_PER_COUNT,
+    "blue": BLUE_RAYLEIGH_SECONDS_PER_COUNT,
 }
 EXPOSURE_TIME_S_BY_COLOR = {
     "green": FRAME_INTERVAL_SECONDS_GREEN,
     "red": FRAME_INTERVAL_SECONDS_RED,
+    "blue": 0.9,  # Exposure duration, distinct from the acquisition cadence.
 }
 BACKGROUND_EDGE_BUFFER_PX = 80.0
 

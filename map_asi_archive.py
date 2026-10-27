@@ -149,6 +149,8 @@ def calibrate_image_for_map(site, im_raw, skymaps, color):
 
 
 def wavelength_title(color, red_wavelength="6300"):
+    if str(color).lower() == "blue":
+        return "427.8nm"
     if str(color).lower() == "green":
         return "557.7nm"
     if str(color).lower() == "red":
@@ -285,7 +287,7 @@ def main(argv=None):
     ap.add_argument("--time", required=True, type=str, default=dt.datetime.now(dt.UTC).strftime("%H%M%S"), help="Time for the ASI images (format: HHMMSS or HHMMSS.s)")
     ap.add_argument("--sites", nargs='*', default=None, help="List of sites to process (default: mission-specific sites)")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use for trajectories and mission-specific site assets")
-    ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel for TIFF lookup and frame timing")
+    ap.add_argument("--color", choices=["green", "red", "blue"], default="green", help="ASI color channel; blue is 4278 Angstrom (GNEISS ARV/BVR/VEE)")
     ap.add_argument("--red-wavelength", choices=["6300", "8446"], default="6300", help="Red-channel wavelength directory to use; default preserves the 6300 workflow")
     ap.add_argument(
         "--bounds",
@@ -348,6 +350,8 @@ def main(argv=None):
     apex = get_mission_apex(date)
     if args.sites is None:
         args.sites = default_sites(args.mission)
+    if args.color == "blue" and (args.mission != "GNEISS" or not set(map(str.upper, args.sites)).issubset({"ARV", "BVR", "VEE"})):
+        ap.error("--color blue currently supports only --mission GNEISS with sites ARV, BVR, VEE")
     try:
         parse_hhmmss_fractional(args.time)
     except ValueError as exc:
@@ -381,7 +385,7 @@ def main(argv=None):
         ap.error(str(exc))
     time_token = sanitize_time_for_filename(time_str)
 
-    frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
+    frame_interval = {"green": FRAME_INTERVAL_SECONDS_GREEN, "red": FRAME_INTERVAL_SECONDS_RED, "blue": 0.90178}[args.color]
 
     # --- Process TIFF-backed sites: search multiple tiles and select closest frame ---
     fixed_norm_limits = None
@@ -442,7 +446,8 @@ def main(argv=None):
     color = args.color
     feather_suffix = "_feather" if args.featherplot else ""
     render_suffix = "" if args.render_mode == "auto" else f"_{args.render_mode}"
-    output_path = mission_output_dir(args.mission, color=args.color, date=date) / f"calibrated_{color}{feather_suffix}_{sites_str}_{date}_{time_token}.png"
+    intensity_prefix = "calibrated"
+    output_path = mission_output_dir(args.mission, color=args.color, date=date) / f"{intensity_prefix}_{color}{feather_suffix}_{sites_str}_{date}_{time_token}.png"
 
     # --- Run downstream plotting even if no TIFFs were found ---
     print(f"Rendering map to {output_path}...", flush=True)

@@ -32,12 +32,16 @@ def test_local_map_uses_selected_rocket_date_without_network(monkeypatch):
     def plot(skymaps, images, **kwargs):
         date = kwargs["map_date"]
         assert kwargs["apex"].year == toYearFraction(dt.datetime.strptime(date, "%Y%m%d"))
+        if kwargs["color"] == "blue":
+            assert kwargs["colorbar_label"] == "Rayleighs"
+            assert kwargs["channel_title"] == "427.8nm"
+            assert kwargs["output_path"].name.startswith("calibrated_blue_")
         plots.append((date, kwargs["color"]))
 
     monkeypatch.setattr(mapping, "plot_map", plot)
 
     for rocket, color in [("397", "green"), ("381", "green"), ("380", "green"),
-                          ("397", "green"), ("397", "red")]:
+                          ("397", "green"), ("397", "red"), ("397", "blue")]:
         mapping.main([
             "--rocket", rocket, "--time", "102400", "--sites", "VEE",
             "--color", color, "--no-shared-norm",
@@ -49,6 +53,7 @@ def test_local_map_uses_selected_rocket_date_without_network(monkeypatch):
         ("20250209", "green"),
         ("20260210", "green"),
         ("20260210", "red"),
+        ("20260210", "blue"),
     ]
     assert not network_calls
 

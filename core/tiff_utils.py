@@ -388,6 +388,12 @@ def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission=
                 os.path.join(folder, f"{prefix}_558_{date_str}_*.tiff"),
                 os.path.join(folder, f"*_{date_str}_*.tiff"),
             ]
+            if color_key == "blue":
+                # Native acquisition files use SOK/ARI + YYMMDD and sidecar logs.
+                patterns.extend([
+                    os.path.join(folder, f"*{date_str[2:]}_*_16bit.tif"),
+                    os.path.join(folder, f"*_{date_str}_*.tif"),
+                ])
             for pattern in patterns:
                 searched_patterns.append(pattern)
                 matched_paths.extend(glob(pattern))

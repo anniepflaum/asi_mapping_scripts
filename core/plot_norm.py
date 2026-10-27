@@ -40,7 +40,7 @@ def compute_log_image_limits(norm_pool, upper_percentile=NORMALIZATION_UPPER_PER
 def choose_image_cmap(colorbar_color, color):
     if colorbar_color == "viridis":
         return "viridis"
-    return "Reds" if str(color).lower() == "red" else "Greens"
+    return {"red": "Reds", "green": "Greens", "blue": "Blues"}.get(str(color).lower(), "Greens")
 
 
 def reference_normalization_time(mission, date, time_str):
