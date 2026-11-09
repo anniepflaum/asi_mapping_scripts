@@ -54,6 +54,9 @@ from core.tiff_utils import build_tiff_metadata, get_site_tiff_candidates
 from core.traj_utils import build_traj_lookup, lookup_traj_geodetic_position, mapped_apex_height
 
 
+from core.missions import output_date_prefix
+
+
 def receiver_suffix(receivers, all_receivers):
     selected = [receiver["acronym"] for receiver in receivers]
     available = sorted(receiver["acronym"] for receiver in all_receivers)
@@ -93,7 +96,7 @@ def make_output_path(
     if not np.isclose(float(auroral_layer_height_km), default_height_km):
         height_suffix = f"_alt{format_height_token(auroral_layer_height_km)}km"
     return Path(
-        f"{series_prefix(mission)}_{date}_{start_tok}_{end_tok}_step{step_tok}"
+        f"{series_prefix(mission)}_{output_date_prefix(mission, date)}{start_tok}_{end_tok}_step{step_tok}"
         f"{height_suffix}{receiver_suffix(receivers, all_receivers)}.h5"
     )
 

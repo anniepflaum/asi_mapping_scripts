@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import h5py
+from core.plot_norm import choose_image_cmap
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 from core.masks import build_overlap_masks
 from core.missions import (
@@ -42,13 +43,16 @@ from core.traj_utils import build_traj_lookup, get_launch_start_from_traj_csv, r
 GNEISS_MAGLAT_CSV = mission_output_dir("GNEISS", color="green") / "tg_to_maglat.csv"
 
 
+from core.missions import output_date_prefix
+
+
 def build_output_path(output_arg, mission, date_str, start, end, color):
     if output_arg:
         return Path(output_arg)
     start_tok = sanitize_time_for_filename(start)
     end_tok = sanitize_time_for_filename(end)
     prefix = "trajectory_keogram" if mission == "GNEISS" else f"{mission}_trajectory_keogram"
-    return mission_output_dir(mission, color=color, date=date_str) / f"{prefix}_{color}_{date_str}_{start_tok}_{end_tok}.png"
+    return mission_output_dir(mission, color=color, date=date_str) / f"{prefix}_{color}_{output_date_prefix(mission, date_str)}{start_tok}_{end_tok}.png"
 
 
 def build_data_output_path(data_output_arg, output_path):
@@ -268,7 +272,7 @@ def save_keogram_data(
     print(f"Saved keogram data to {data_output_path}")
 
 
-def plot_maglat_keogram(output_path, panels, maglat_by_tag, log_norm, color):
+def plot_maglat_keogram(output_path, panels, maglat_by_tag, log_norm, color, colorbar_color=""):
     """Plot GNEISS keograms with magnetic latitude on the x-axis."""
     fig_height = 5 if len(panels) == 1 else 5 * len(panels)
     fig, axes = plt.subplots(len(panels), 1, figsize=(14, fig_height), sharex=True, constrained_layout=True)
@@ -279,6 +283,7 @@ def plot_maglat_keogram(output_path, panels, maglat_by_tag, log_norm, color):
         "398": "tab:orange",
     }
     image_handle = None
+    image_cmap = choose_image_cmap(colorbar_color, color)
     for ax, panel in zip(axes, panels):
         _time_ax, img, flight_times, line_y, y_bounds, title, _launch_start, tag = panel
         tag = str(tag)
@@ -293,7 +298,7 @@ def plot_maglat_keogram(output_path, panels, maglat_by_tag, log_norm, color):
             maglats[valid_cols],
             flight_times[start_idx:end_idx],
             img[start_idx:end_idx, :][:, valid_cols],
-            cmap="Greens",
+            cmap=image_cmap,
             norm=log_norm,
             shading="auto",
         )
@@ -329,7 +334,7 @@ def main():
     ap.add_argument("--samples", type=int, default=480, help="Number of equal-time samples along each trajectory")
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to merge into the keogram")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use")
-    ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
+    ap.add_argument("--color", choices=["green", "red", "blue"], default="green", help="ASI color channel; blue is 4278 Angstrom (GNEISS ARV/BVR/VEE)")
     ap.add_argument("--output", default=None, help="Output PNG path")
     ap.add_argument(
         "--data-output",
@@ -352,6 +357,8 @@ def main():
         args.end = default_end
     if args.sites is None:
         args.sites = default_sites(args.mission)
+    if args.color == "blue" and (args.mission != "GNEISS" or not set(map(str.upper, args.sites)).issubset({"ARV", "BVR", "VEE"})):
+        ap.error("--color blue currently supports only --mission GNEISS with sites ARV, BVR, VEE")
     validate_color_and_sites(ap, args.mission, args.color, args.sites)
     args.sites, unsupported_sites = partition_calibrated_sites(
         [site.upper() for site in args.sites],
@@ -390,7 +397,7 @@ def main():
     build_overlap_masks(skymaps)
     samplers = {site: build_site_sampler(skymaps, site) for site in selected_sites if site in skymaps}
 
-    frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
+    frame_interval = {"green": FRAME_INTERVAL_SECONDS_GREEN, "red": FRAME_INTERVAL_SECONDS_RED, "blue": 0.90178}[args.color]
     tiff_metadata = {}
     for site in ["ARV", "VEE", "BVR"]:
         if site in selected_sites:
@@ -533,6 +540,7 @@ def main():
         "397": "tab:blue",
         "398": "tab:orange",
     }
+    image_cmap = choose_image_cmap("", args.color)
     for ax, img, flight_times, line_y, y_bounds, title, launch_start, tag in panels:
         y_min, y_max = y_bounds
         start_idx = int(np.searchsorted(flight_times, y_min, side="left"))
@@ -547,7 +555,7 @@ def main():
             origin="lower",
             aspect="auto",
             extent=extent,
-            cmap="Greens",
+            cmap=image_cmap,
             norm=log_norm,
         )
         ax.set_title(f"{title}")
@@ -572,7 +580,7 @@ def main():
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     data_output_path = build_data_output_path(args.data_output, output_path)
-    maglat_by_tag = None
+    maglat_by_tag = True
     if args.mission == "GNEISS":
         maglat_lookup = load_gneiss_maglat_lookup()
         maglat_by_tag = interpolate_maglat_arrays(time_since_tg, [panel[-1] for panel in panels], maglat_lookup)

@@ -42,6 +42,9 @@ from core.traj_utils import (
 LATLON_GRID_ZORDER = 30
 
 
+from core.missions import output_date_prefix
+
+
 def channel_label(color):
     return "Red Channel Intensity" if str(color).lower() == "red" else "Green Channel Intensity"
 
@@ -213,9 +216,10 @@ def build_time_label(args):
         tplus = format_time_since_launch(time_str, safe_launch_start_from_traj(cfg.path, cfg.label))
         if tplus is not None:
             tplus_parts.append(f"{cfg.label} {tplus}")
-    if not tplus_parts:
-        return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}"
-    return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {format_time_label(time_str)}\n" + " | ".join(tplus_parts)
+    label = format_time_label(time_str)
+    if str(mission).upper() != "GNEISS":
+        label = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]} {label}"
+    return label + ("\n" + " | ".join(tplus_parts) if tplus_parts else "")
 
 
 def load_trajectory_context(map_time, color, receivers, plot_ipps, mission="GNEISS", date=None, map_alt_km=None):
@@ -714,7 +718,7 @@ def plot_map(skymaps, imgs, output_path=None, map_time=None, map_date=None, boun
         color,
         build_time_label(get_plot_call_args()),
         output_path,
-        lambda args: mission_output_dir(mission, color=args.color, date=args.date) / f"{mission}_launch_science_fast_{args.date}_{sanitize_time_for_filename(args.time)}.png",
+        lambda args: mission_output_dir(mission, color=args.color, date=args.date) / f"{mission}_launch_science_fast_{output_date_prefix(mission, args.date)}{sanitize_time_for_filename(args.time)}.png",
         mission_output_dir(mission, color=color) / f"{mission}_launch_science_fast.png",
         brightness_markers=brightness_markers,
         shared_norm=shared_norm,

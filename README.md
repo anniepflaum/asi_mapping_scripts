@@ -300,7 +300,7 @@ Compares GNEISS IPP brightness series against receiver `.mat` files.
 
 ```bash
 python3 compare_faraday_ipp_series.py \
-  --ipp-csv "$LAB317_OUTPUT_ROOT/asi-mapping/mapped/green/GNEISS/ipps_brightness_series_20260210_101900_102848_step0p05.csv" \
+  --ipp-csv "$LAB317_OUTPUT_ROOT/asi-mapping/mapped/green/GNEISS/ipps_brightness_series_101900_102848_step0p05.csv" \
   --receiver-dir "$LAB317_DATA_ROOT/raw/receiver-data/asi-mapping"
 ```
 
@@ -343,4 +343,4 @@ Examples:
 - trajectory brightness HDF5: `GIRAFF_brightness_vs_time_20250209_083501_084410_step0p05.h5`
 - IPP brightness CSVs: `GIRAFF_ipps_brightness_series_20250209_083501_084410_step0p05.csv`
 - GIRAFF keograms: `GIRAFF_trajectory_keogram_green_20250209_083501_084410.png`
-- GNEISS keograms: `trajectory_keogram_green_20260210_101900_102848.png`
+- GNEISS keograms: `trajectory_keogram_green_101900_102848.png`

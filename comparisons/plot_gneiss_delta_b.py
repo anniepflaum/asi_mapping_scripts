@@ -38,7 +38,7 @@ from core.paths import DATA_ROOT, MAPPED_DIR
 
 
 DATA_DIR = DATA_ROOT / "raw" / "rocket" / "gneiss-delta-b"
-BRIGHTNESS = DATA_ROOT / "processed" / "gneiss" / "stackplot" / "brightness_vs_time_20260210_101900_102848_step0p05.h5"
+BRIGHTNESS = DATA_ROOT / "processed" / "gneiss" / "stackplot" / "brightness_vs_time_101900_102848_step0p05.h5"
 TG = rocket_launch_datetime("397")
 COMPONENTS = {"Magnitude": 1, "East": 2, "North": 3, "Up": 4}
 MAGLAT = MAPPED_DIR / "green" / "GNEISS" / "tg_to_maglat.csv"
@@ -120,7 +120,7 @@ def magnetic_axis(ax, component, limit):
 
 def finish(fig, axes, title, sources, output, args):
     fig.suptitle(title + "\n" + "\n".join(sources), fontsize=10)
-    axes[-1].set_xlabel(f"Time since TG (s); TG = {TG:%Y-%m-%d %H:%M:%S} UTC")
+    axes[-1].set_xlabel(f"Time since TG (s); TG = {TG:%H:%M:%S} UTC")
     if args.xlim:
         axes[-1].set_xlim(*args.xlim)
     for ax in axes:

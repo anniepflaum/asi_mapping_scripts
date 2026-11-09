@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
+from asi_shared.detector import correct_detector_frame
 from core.paths import IMAGE_DIR
 
 
@@ -405,10 +406,12 @@ def get_site_tiff_candidates(site, date_str, color, override_dirs=None, mission=
     return unique_paths
 
 
-def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval, color="green", verbose=True):
+def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval, color="green", verbose=True, *, correct_detector=True):
     """
     Search candidate TIFF tiles and load the frame closest to target_dt.
     Returns (raw_image, normalized_image), both float32 arrays.
+    ARV blue DN frames include the shared column correction by default.
+    correct_detector=False is reserved for raw-versus-corrected diagnostics.
     """
     cache_paths = {cache_path for cache_path, _metadata_path in iter_giraff_cache_paths()}
     tiff_lookup_paths = {
@@ -493,6 +496,8 @@ def load_best_frame_from_tiffs(site, tiff_paths, target_dt, frame_interval, colo
     if im.ndim == 3:
         im = im[:, :, 0]
     im_raw = im.astype(np.float32)
+    if correct_detector:
+        im_raw = correct_detector_frame(im_raw, best["path"], site=site, color=color)
     return im_raw, im_raw.copy().astype(np.float32)
 
 
@@ -534,10 +539,10 @@ def load_best_frame_from_cached_tiffs(site, tiff_metadata, target_dt, frame_inte
     if Path(best["path"]).suffix.lower() == ".npy":
         stack = np.load(best["path"], mmap_mode="r")
         im = np.asarray(stack[best["idx"]], dtype=np.float32)
-        return im
+        return correct_detector_frame(im, best["path"], site=site)
 
     with tifffile.TiffFile(best["path"]) as tif:
         im = tif.pages[best["idx"]].asarray()
     if im.ndim == 3:
         im = im[:, :, 0]
-    return im.astype(np.float32)
+    return correct_detector_frame(im.astype(np.float32), best["path"], site=site)

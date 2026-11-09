@@ -166,6 +166,11 @@ def giraff_rocket_id_for_date(date=None):
     return "380" if normalize_date_key(date) == "20250209" else "381"
 
 
+def output_date_prefix(mission, date):
+    """GNEISS output paths already identify the flight; other missions retain dates."""
+    return "" if mission_key(mission) == "GNEISS" else f"{date}_"
+
+
 def mission_output_dir(mission, color="green", date=None):
     base = MAPPED_DIR / str(color).lower()
     key = mission_key(mission)

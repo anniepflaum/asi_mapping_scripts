@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import tifffile
+from asi_shared.detector import correct_detector_frame
 
 from core.time_utils import parse_date_and_time
 
@@ -189,4 +190,4 @@ def load_tiff_frame_with_metadata(site, tiff_metadata, target_dt, frame_interval
             im = tif.pages[best["idx"]].asarray()
     if im.ndim == 3:
         im = im[:, :, 0]
-    return im.astype("float32"), {"site": site, "frame_time": best["frame_dt"].isoformat()}
+    return correct_detector_frame(im.astype("float32"), best["path"], site=site), {"site": site, "frame_time": best["frame_dt"].isoformat()}

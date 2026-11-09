@@ -57,6 +57,9 @@ from core.traj_utils import (
 )
 
 
+from core.missions import output_date_prefix
+
+
 def series_prefix(mission):
     return "brightness_vs_time" if str(mission).upper() == "GNEISS" else f"{str(mission).upper()}_brightness_vs_time"
 
@@ -99,7 +102,7 @@ def make_output_path(mission, date, start, end, step, color="green", sites=None)
     step_tok = str(step).replace(".", "p")
     fit_suffix = "_FIT" if str(mission).upper() == "GIRAFF" else ""
     return Path(
-        f"{series_prefix(mission)}_{date}_{start_tok}_{end_tok}_step{step_tok}"
+        f"{series_prefix(mission)}_{output_date_prefix(mission, date)}{start_tok}_{end_tok}_step{step_tok}"
         f"{nondefault_site_suffix(mission, sites)}{fit_suffix}.h5"
     )
 

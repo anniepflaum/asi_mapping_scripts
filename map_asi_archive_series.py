@@ -31,6 +31,9 @@ from core.missions import default_sites, default_time_range, mission_output_dir,
 import map_asi_archive
 
 
+from core.missions import output_date_prefix
+
+
 def clear_progress_line():
     cols = shutil.get_terminal_size(fallback=(80, 24)).columns
     sys.stdout.write("\r" + (" " * max(cols - 1, 1)) + "\r")
@@ -68,7 +71,7 @@ def series_output_dir(args):
     start_token = sanitize_time_for_filename(args.start)
     end_token = sanitize_time_for_filename(args.end)
     step_token = format_step_token(args.step)
-    folder_name = f"{wavelength_token(args.color, args.red_wavelength)}_{sites_str}_{args.date}_{start_token}_to_{end_token}_step_{step_token}"
+    folder_name = f"{wavelength_token(args.color, args.red_wavelength)}_{sites_str}_{output_date_prefix(args.mission, args.date)}{start_token}_to_{end_token}_step_{step_token}"
     return mission_output_dir(args.mission, color=args.color, date=args.date) / folder_name
 
 
@@ -78,7 +81,7 @@ def frame_output_path(args, time_arg):
     time_token = sanitize_time_for_filename(time_arg)
     render_suffix = "" if args.render_mode == "auto" else f"_{args.render_mode}"
     filename = (
-        f"calibrated_{args.color}{feather_suffix}_{sites_str}_{args.date}_{time_token}"
+        f"calibrated_{args.color}{feather_suffix}_{sites_str}_{output_date_prefix(args.mission, args.date)}{time_token}"
         f"{render_suffix}.png"
     )
     return mission_output_dir(args.mission, color=args.color, date=args.date) / filename

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import tifffile
+from asi_shared.detector import correct_detector_frame, is_arv_blue, ARV_BLUE_CORRECTION
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
@@ -119,13 +120,13 @@ def read_selected_frame(selection):
             frame = tif.pages[selection["idx"]].asarray()
     if frame.ndim == 3:
         frame = frame[:, :, 0]
-    return frame
+    return correct_detector_frame(frame, path)
 
 
 def output_path_for_site(output_dir, site, date, start, end, _step, color):
     start_token = sanitize_time_for_filename(start)
     end_token = sanitize_time_for_filename(end)
-    return output_dir / f"{site}_GNEISS_{color}_{date}_{start_token}_{end_token}.tiff"
+    return output_dir / f"{site}_GNEISS_{color}_{start_token}_{end_token}.tiff"
 
 
 def write_site_tiff(site, metadata, times, output_path, frame_interval, overwrite=False):
@@ -137,7 +138,8 @@ def write_site_tiff(site, metadata, times, output_path, frame_interval, overwrit
 
     with tifffile.TiffWriter(output_path, bigtiff=True) as writer:
         for selection in selections:
-            writer.write(read_selected_frame(selection))
+            writer.write(read_selected_frame(selection),
+                         metadata={"detector_correction": ARV_BLUE_CORRECTION} if is_arv_blue(selection["path"]) else None)
 
     first = selections[0]
     last = selections[-1]

@@ -82,7 +82,7 @@ def default_output_path(args):
     start_token = sanitize_time_for_filename(args.start)
     end_token = sanitize_time_for_filename(args.end)
     step_token = f"{args.step:g}".replace(".", "p")
-    name = f"GNEISS_KAT_merged_{args.color}_{args.date}_{start_token}_{end_token}_step{step_token}s.nc"
+    name = f"GNEISS_KAT_merged_{args.color}_{start_token}_{end_token}_step{step_token}s.nc"
     return mission_output_dir("GNEISS", color=args.color, date=args.date) / name
 
 

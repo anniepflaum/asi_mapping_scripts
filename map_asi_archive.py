@@ -74,6 +74,9 @@ _SKYMAP_CACHE = {}
 _REFERENCE_NORM_CACHE = {}
 
 
+from core.missions import output_date_prefix
+
+
 def map_featherplot_geometry(apex, trajectory, vectors, target_height_km):
     """Apex-map the trajectory and tails, then draw geographic EN arrows."""
     traj_lat, traj_lon, _ = apex.map_to_height(
@@ -112,7 +115,7 @@ def map_featherplot_geometry(apex, trajectory, vectors, target_height_km):
 
 
 @functools.lru_cache(maxsize=4)
-def cached_featherplot_context(color="green", date="20260210", step_seconds=1.0):
+def cached_featherplot_context(color="green", date="20260210", step_seconds=1.0, map_alt_km=None):
     """Load GNEISS vectors and place geographic EN arrows on mapped trajectories."""
     apex = get_mission_apex(date)
     target_height_km = mapped_apex_height(color) if map_alt_km is None else map_alt_km
@@ -447,7 +450,7 @@ def main(argv=None):
     feather_suffix = "_feather" if args.featherplot else ""
     render_suffix = "" if args.render_mode == "auto" else f"_{args.render_mode}"
     intensity_prefix = "calibrated"
-    output_path = mission_output_dir(args.mission, color=args.color, date=date) / f"{intensity_prefix}_{color}{feather_suffix}_{sites_str}_{date}_{time_token}.png"
+    output_path = mission_output_dir(args.mission, color=args.color, date=date) / f"{intensity_prefix}_{color}{feather_suffix}_{sites_str}_{output_date_prefix(args.mission, date)}{time_token}.png"
 
     # --- Run downstream plotting even if no TIFFs were found ---
     print(f"Rendering map to {output_path}...", flush=True)
