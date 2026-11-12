@@ -5,6 +5,11 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
+
+# Direct execution puts comparisons/, rather than the repository, on sys.path.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 
@@ -15,12 +20,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from core.paths import DATA_ROOT, MAPPED_DIR, OUTPUT_ROOT
+from core.paths import DATA_ROOT, WORKSPACE_DIR
 
 
-DEFAULT_FOOTPRINT_H5 = OUTPUT_ROOT / "asispectralinversion" / "gneiss_rg_101900_102840_step1s_footprints.h5"
+DEFAULT_FOOTPRINT_H5 = WORKSPACE_DIR / "asispectralinversion" / "outputs" / "gneiss_rgb_102400_102900_step0.9s_footprints.h5"
 DEFAULT_CHIMPS_H5 = DATA_ROOT / "processed" / "gneiss" / "stackplot" / "chimps_397_downgoing_data.h5"
-DEFAULT_BRIGHTNESS_H5 = MAPPED_DIR / "green" / "GNEISS" / "brightness_vs_time_101900_102848_step0p05.h5"
+DEFAULT_BRIGHTNESS_H5 = DATA_ROOT / "processed" / "gneiss" / "stackplot" / "brightness_vs_time_101900_102848_step0p05.h5"
 DEFAULT_OUTPUT = Path(__file__).with_name("compare_chimps_spectra_e0_footprint.png")
 DEFAULT_Q_OUTPUT = Path(__file__).with_name("compare_chimps_total_counts_q_footprint.png")
 
@@ -62,6 +67,13 @@ def load_chimps(path):
 def load_footprint_product(path, rocket, product):
     product_path = f"rockets/{rocket}/products/{product}"
     with h5py.File(path, "r") as h5:
+        if "combined" in h5 and "time_iso" in h5 and "rockets" not in h5:
+            footprint_path = Path(path).with_name(Path(path).stem + "_footprints.h5")
+            raise ValueError(
+                f"{path} contains full inversion grids, not rocket-footprint series. "
+                f"Use --footprint-h5 {footprint_path}. If that file does not exist, "
+                "generate it with asispectralinversion/inversion_footprint.py first."
+            )
         time_s = np.asarray(h5["time_since_tg_s"], dtype=float)
         values = np.asarray(h5[f"{product_path}/mean"], dtype=float)
         outside = np.asarray(h5[f"{product_path}/outside_footprint"], dtype=bool)
@@ -96,12 +108,25 @@ def parse_args():
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--q-output", type=Path, default=DEFAULT_Q_OUTPUT)
     parser.add_argument("--dpi", type=int, default=200)
-    return parser.parse_args()
+    parser.add_argument("--xmin", type=float, help="Left time limit in seconds since TG (default: CHIMPS minimum)")
+    parser.add_argument("--xmax", type=float, help="Right time limit in seconds since TG (default: CHIMPS maximum)")
+    args = parser.parse_args()
+    for name in ("xmin", "xmax"):
+        value = getattr(args, name)
+        if value is not None and not np.isfinite(value):
+            parser.error(f"--{name} must be finite")
+    if args.xmin is not None and args.xmax is not None and args.xmin >= args.xmax:
+        parser.error("--xmin must be less than --xmax")
+    return args
 
 
 def main():
     args = parse_args()
     time_s, energy_eV, log_counts, total_counts, metadata = load_chimps(args.chimps_h5)
+    xmin = time_s.min() if args.xmin is None else args.xmin
+    xmax = time_s.max() if args.xmax is None else args.xmax
+    if xmin >= xmax:
+        raise ValueError("The left time limit must be less than the right time limit; set --xmin and --xmax accordingly")
     e0_time_s, e0_eV = load_footprint_product(
         args.footprint_h5, args.rocket, "characteristic_energy"
     )
@@ -169,7 +194,7 @@ def main():
         (energy_ticks >= energy_eV.min()) & (energy_ticks <= energy_eV.max())
     ]
     ax.set_yticks(np.log10(visible_ticks), [f"{value:g}" for value in visible_ticks])
-    ax.set_xlim(time_s.min(), time_s.max())
+    ax.set_xlim(xmin, xmax)
     ax.set_ylim(*np.log10([energy_eV.min(), energy_eV.max()]))
     ax.legend(
         [e0_line, spectrum_q_line],
@@ -196,7 +221,7 @@ def main():
     counts_ax.set_xlabel("Time since TG (s)")
     counts_ax.set_ylabel("CHIMPS Total Counts", color="tab:red")
     counts_ax.tick_params(axis="y", labelcolor="tab:red")
-    counts_ax.set_xlim(time_s.min(), time_s.max())
+    counts_ax.set_xlim(xmin, xmax)
     counts_ax.grid(True, alpha=0.25)
 
     q_ax = counts_ax.twinx()
@@ -224,7 +249,8 @@ def main():
         f"Footpoint Brightness ({brightness_units})", color="tab:green"
     )
     brightness_ax.tick_params(axis="y", labelcolor="tab:green")
-    brightness_ax.set_ylim(0, 75000)
+    brightness_ax.set_yscale("log", nonpositive="mask")
+    brightness_ax.set_ylim(top=75000)
     counts_ax.set_title(
         r"CHIMPS 36.397 Total Counts, Inversion $Q$, and Footpoint Brightness",
         fontweight="bold",

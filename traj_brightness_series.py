@@ -522,6 +522,7 @@ def main():
                     site_frame_info["frame_time"],
                     calibration_cache,
                     edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX,
+                    elevation=skymaps_by_alt[alts[0]][site]["elev"],
                 )
                 if calibrated is not None:
                     imgs_calibrated[site] = calibrated

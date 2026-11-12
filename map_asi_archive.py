@@ -140,7 +140,7 @@ def cached_featherplot_context(color="green", date="20260210", step_seconds=1.0,
 
 
 def calibrate_image_for_map(site, im_raw, skymaps, color):
-    calibrated, bg = calibrate_image(site, im_raw, skymaps[site]["mask"], color, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX)
+    calibrated, bg = calibrate_image(site, im_raw, skymaps[site]["mask"], color, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX, elevation=skymaps[site]["elev"])
     if calibrated is None:
         print(f"{site}: no {color} calibration factor configured; using raw counts.")
         return im_raw, None

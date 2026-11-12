@@ -1,9 +1,10 @@
 """ASI camera calibration and corner-background helpers."""
 
 import numpy as np
-from scipy.ndimage import distance_transform_edt
-from scipy.optimize import curve_fit
-from skimage.restoration import estimate_sigma
+from asi_shared.background import (
+    BACKGROUND_EDGE_BUFFER_PX, BACKGROUND_ELEVATION_CUTOFF_DEG,
+    inset_mask, physical_offsky_mask, gauss, finite_values, estimate_corner_background,
+)
 
 from core.constants import FRAME_INTERVAL_SECONDS_GREEN, FRAME_INTERVAL_SECONDS_RED
 
@@ -14,9 +15,9 @@ GREEN_RAYLEIGH_SECONDS_PER_COUNT = {
     "BVR": 57.0,
 }
 RED_RAYLEIGH_SECONDS_PER_COUNT = {
-    "ARV": 165.0,
-    "VEE": 113.0,
-    "BVR": 128.0,
+    "ARV": 40.0,
+    "VEE": 69.5,
+    "BVR": 30.2,
 }
 BLUE_RAYLEIGH_SECONDS_PER_COUNT = {
     "ARV": 35.5,
@@ -33,82 +34,11 @@ EXPOSURE_TIME_S_BY_COLOR = {
     "red": FRAME_INTERVAL_SECONDS_RED,
     "blue": 0.9,  # Exposure duration, distinct from the acquisition cadence.
 }
-BACKGROUND_EDGE_BUFFER_PX = 80.0
-
-
-def gauss(x, amp, center, sigma):
-    return amp * np.exp(-((x - center) ** 2) / (2 * sigma**2))
 
 
 def buffered_corner_mask(mask, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX):
-    distances = distance_transform_edt(np.asarray(mask, dtype=bool))
-    return np.asarray(mask, dtype=bool) & (distances > float(edge_buffer_px))
-
-
-def finite_values(values):
-    values = np.asarray(values, dtype=float)
-    return values[np.isfinite(values)]
-
-
-def estimate_corner_background(im, mask):
-    imvec = finite_values(np.asarray(im)[mask])
-    if imvec.size < 2:
-        raise ValueError(f"corner mask produced only {imvec.size} finite pixels")
-
-    data_min = float(np.nanmin(imvec))
-    data_max = float(np.nanmax(imvec))
-    center_guess = float(np.nanmedian(imvec))
-    if data_max <= data_min:
-        return {
-            "center": center_guess,
-            "sigma": 0.0,
-            "median": center_guess,
-            "fit_failed": True,
-            "n_pixels": int(imvec.size),
-        }
-
-    bins = np.arange(np.floor(data_min), np.ceil(data_max) + 1)
-    if bins.size < 3:
-        bins = np.linspace(data_min, data_max + 1.0, 3)
-    bincenters = 0.5 * (bins[:-1] + bins[1:])
-    hist, _ = np.histogram(imvec, bins=bins)
-
-    sigma_guess = float(estimate_sigma(np.asarray(im)[np.isfinite(im)]))
-    if not np.isfinite(sigma_guess) or sigma_guess <= 0:
-        sigma_guess = float(np.nanstd(imvec))
-    if not np.isfinite(sigma_guess) or sigma_guess <= 0:
-        sigma_guess = 1.0
-
-    fit_failed = False
-    peak_guess = max(float(np.nanmax(hist)) / 5.0, 1.0)
-    try:
-        _peak, center, sigma = curve_fit(
-            gauss,
-            bincenters,
-            hist,
-            p0=[peak_guess, center_guess, sigma_guess],
-            maxfev=10000,
-        )[0]
-        center = float(center)
-        sigma = abs(float(sigma))
-    except Exception:
-        fit_failed = True
-        center = center_guess
-        sigma = sigma_guess
-
-    hrange = float(bins[-1] - bins[0])
-    if hrange > 0 and (sigma > (hrange / 2.0) or abs(center - center_guess) > (hrange / 4.0)):
-        fit_failed = True
-        center = center_guess
-        sigma = sigma_guess
-
-    return {
-        "center": center,
-        "sigma": sigma,
-        "median": center_guess,
-        "fit_failed": fit_failed,
-        "n_pixels": int(imvec.size),
-    }
+    """Inset an explicitly constructed background region (diagnostic helper)."""
+    return inset_mask(mask, edge_buffer_px=edge_buffer_px)
 
 
 def calibration_factor(site, color):
@@ -137,19 +67,24 @@ def calibration_metadata(sites, color):
             if calibration_factor(site, color) is not None
         },
         "exposure_time_s": exposure_time_s(color),
-        "background_method": "buffered_corners",
+        "background_method": "gaussian_histogram_median_fallback",
+        "background_elevation_cutoff_deg": BACKGROUND_ELEVATION_CUTOFF_DEG,
         "background_edge_buffer_px": BACKGROUND_EDGE_BUFFER_PX,
     }
 
 
-def calibrate_image(site, im, mask, color, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX):
+def calibrate_image(site, im, mask, color, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX, *, elevation=None):
     factor = calibration_factor(site, color)
     exposure = exposure_time_s(color)
     if exposure is None:
         return None, None
     if factor is None:
         return None, None
-    fit_mask = buffered_corner_mask(mask, edge_buffer_px=edge_buffer_px)
+    if elevation is None:
+        raise ValueError("Native elevation is required for 0-degree background selection")
+    fit_mask = physical_offsky_mask(elevation, edge_buffer_px=edge_buffer_px)
+    if np.shape(im) != fit_mask.shape:
+        raise ValueError("Image/elevation shape mismatch")
     bg = estimate_corner_background(im, fit_mask)
     dn = np.asarray(im, dtype=np.float32) - float(bg["center"])
     rayleighs = (dn / float(exposure)) * float(factor)
@@ -164,15 +99,18 @@ def calibrate_image_cached(
     frame_key,
     cache,
     edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX,
+    *, elevation=None,
 ):
     """Calibrate a frame once, reusing it while a time series selects the same frame."""
+    policy_key = (float(edge_buffer_px), id(elevation), str(color))
     cached = cache.get(site)
-    if cached is not None and cached["frame_key"] == frame_key:
+    if cached is not None and cached["frame_key"] == frame_key and cached.get("policy_key") == policy_key:
         return cached["image"], cached["background"]
-    image, background = calibrate_image(site, im, mask, color, edge_buffer_px=edge_buffer_px)
+    image, background = calibrate_image(site, im, mask, color, edge_buffer_px=edge_buffer_px, elevation=elevation)
     if image is not None:
         cache[site] = {
             "frame_key": frame_key,
+            "policy_key": policy_key,
             "image": image,
             "background": background,
         }
@@ -183,5 +121,5 @@ def green_calibration_factor(site):
     return calibration_factor(site, "green")
 
 
-def calibrate_green_image(site, im, mask, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX):
-    return calibrate_image(site, im, mask, "green", edge_buffer_px=edge_buffer_px)
+def calibrate_green_image(site, im, mask, edge_buffer_px=BACKGROUND_EDGE_BUFFER_PX, *, elevation=None):
+    return calibrate_image(site, im, mask, "green", edge_buffer_px=edge_buffer_px, elevation=elevation)
