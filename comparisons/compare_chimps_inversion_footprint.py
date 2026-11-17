@@ -23,7 +23,7 @@ import numpy as np
 from core.paths import DATA_ROOT, WORKSPACE_DIR
 
 
-DEFAULT_FOOTPRINT_H5 = WORKSPACE_DIR / "asispectralinversion" / "outputs" / "gneiss_rgb_102400_102900_step0.9s_footprints.h5"
+DEFAULT_FOOTPRINT_H5 = WORKSPACE_DIR / "asispectralinversion" / "outputs" / "gneiss_rgb_102540_102720_step0.3s_footprints.h5"
 DEFAULT_CHIMPS_H5 = DATA_ROOT / "processed" / "gneiss" / "stackplot" / "chimps_397_downgoing_data.h5"
 DEFAULT_BRIGHTNESS_H5 = DATA_ROOT / "processed" / "gneiss" / "stackplot" / "brightness_vs_time_101900_102848_step0p05.h5"
 DEFAULT_OUTPUT = Path(__file__).with_name("compare_chimps_spectra_e0_footprint.png")
