@@ -344,7 +344,7 @@ def main():
     ap.add_argument("--step", type=float, default=0.05, help="Step size in seconds")
     ap.add_argument("--sites", nargs="*", default=None, help="Sites to include")
     ap.add_argument("--mission", choices=["GNEISS", "GIRAFF"], default=None, help="Mission dataset to use")
-    ap.add_argument("--color", choices=["green", "red"], default="green", help="ASI color channel")
+    ap.add_argument("--color", choices=["green", "red", "blue"], default="green", help="ASI color channel; blue is 4278 Angstrom (GNEISS ARV/BVR/VEE)")
     ap.add_argument("--output", default=None, help="Output HDF5 path")
     ap.add_argument("--no-plot", action="store_true", help="Write the HDF5 file only and skip the PNG plot")
     ap.add_argument(
@@ -381,6 +381,8 @@ def main():
     if not calibrated_sites:
         ap.error(f"none of the requested sites has a {args.color} Rayleigh calibration")
     args.sites = calibrated_sites
+    if args.color == "blue" and (args.mission != "GNEISS" or not set(args.sites).issubset({"ARV", "BVR", "VEE"})):
+        ap.error("--color blue currently supports only --mission GNEISS with sites ARV, BVR, VEE")
     for site in args.sites:
         print(
             f"{site}: calibration factor={calibration_factor(site, args.color):g} R s/count, "
@@ -419,7 +421,11 @@ def main():
         if site in selected_sites:
             tiff_candidates[site] = get_site_tiff_candidates(site, args.date, args.color, mission=args.mission)
 
-    frame_interval = FRAME_INTERVAL_SECONDS_GREEN if args.color == "green" else FRAME_INTERVAL_SECONDS_RED
+    frame_interval = {
+        "green": FRAME_INTERVAL_SECONDS_GREEN,
+        "red": FRAME_INTERVAL_SECONDS_RED,
+        "blue": 0.90178,
+    }[args.color]
     for site in ["ARV", "VEE", "BVR"]:
         if site in tiff_candidates:
             tiff_metadata[site] = build_tiff_metadata(tiff_candidates[site], frame_interval)
